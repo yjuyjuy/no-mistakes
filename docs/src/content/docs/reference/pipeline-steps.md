@@ -52,6 +52,7 @@ Fetches the latest authoritative remote state, fetches the configured pushed-bra
 - If a fast-forward is possible, does a hard-reset instead of a rebase
 - If the diff against the default branch is empty after rebase, completes rebase and skips all remaining pipeline steps
 - On conflict: records conflicting files, aborts the rebase, and reports findings
+- After any resolution (auto-fix or a clean multi-target rebase), verifies the rebase preserved the branch's own hunks and pauses with a non-auto-fixable `ask-user` finding if it silently dropped author-added lines (a resolution that kept only the upstream side); the check requires both a patch-id mismatch and vanished net-added author lines and fails open on git errors, so a correct resolution or clean rebase is never blocked
 
 **Auto-fix:** when enabled, the agent resolves conflict markers, stages files, and runs `git rebase --continue` in a non-interactive Git environment so Git accepts the existing commit message instead of opening an editor. The prompt includes user intent when available. Manual fix rounds also include any per-conflict user notes, any selected user-authored findings from the TUI or AXI interface, and sanitized prior-round history in the prompt. The Rebase step does not synthesize a fix commit subject; `git rebase --continue` preserves the rebased commits' subjects.
 

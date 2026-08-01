@@ -1,8 +1,10 @@
 package steps
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/kunchenguid/no-mistakes/internal/agent"
@@ -54,6 +56,11 @@ func (s *ReviewStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome,
 	// regression tests guard the wording, not the runtime.
 	var fixSummary string
 	if sctx.Fixing {
+		// Capture the head as it stood before this fix round so a post-fix
+		// backstop can detect a fixer that silently reverted contributed work
+		// (the net-deleted-author-lines class). executeFixMode advances
+		// sctx.Run.HeadSHA when it commits, so preFixHead must be read first.
+		preFixHead := strings.TrimSpace(sctx.Run.HeadSHA)
 		previousFindings := sanitizedPreviousFindingsForPrompt(sctx.PreviousFindings)
 		historySection := executionContextPromptSection() + roundHistoryPromptSection(sctx) + userIntentPromptSection(sctx)
 		fixPrompt := fmt.Sprintf(
@@ -108,6 +115,15 @@ Previous review findings to address:
 			return nil, err
 		}
 		fixSummary = summary
+
+		// Net-deleted-author-lines backstop: if the fix round silently reverted
+		// contributed work (removed author-added lines without rewriting them in
+		// place), park for a human regardless of intent source. This is the
+		// review-loop analogue of the rebase parity check and catches the same
+		// "green pass on reverted work" class arriving through a fixer round.
+		if outcome := assertFixPreservedAuthorWork(ctx, sctx, baseSHA, preFixHead, fixSummary); outcome != nil {
+			return outcome, nil
+		}
 	}
 	reviewTargetSHA := sctx.Run.HeadSHA
 
@@ -171,10 +187,10 @@ Previous review findings to address:
 	// findings; later steps own those. External / pre-existing lifecycle
 	// requirements stay in scope.
 	//
-	// TODO(intent-conformance-C, HELD): add the deterministic, zero-LLM
-	// net-deleted-author-lines git-diff backstop for the removal-of-required
-	// class - a fixer round that net-deletes author-added lines parks
-	// regardless of intent source. Held pending a scope decision.
+	// The deterministic, zero-LLM net-deleted-author-lines backstop for the
+	// removal-of-required class now runs in fix mode (assertFixPreservedAuthorWork
+	// above): a fix round that net-deletes author-added lines without rewriting
+	// them parks regardless of intent source.
 	historySection := executionContextPromptSection() + roundHistoryPromptSection(sctx) + userIntentPromptSection(sctx) + intentConformanceReviewClause(sctx) + pipelineDeliveryPhaseClause()
 
 	prompt := fmt.Sprintf(
@@ -287,6 +303,64 @@ Risk assessment (after listing all findings):
 func approvedReviewOutcome(reviewTargetSHA string, outcome *pipeline.StepOutcome) (*pipeline.StepOutcome, error) {
 	outcome.ReviewApprovedHeadSHA = reviewTargetSHA
 	return outcome, nil
+}
+
+// assertFixPreservedAuthorWork is the deterministic net-deleted-author-lines
+// backstop: it parks the run when a review fix round silently reverted work the
+// branch contributed, rather than fixing it forward. It compares the branch's
+// author-added lines before the fix round (baseSHA..preFixHead) against the tree
+// after it, and reports only lines that were removed without being rewritten in
+// place (see detectFixRoundRevert). A legitimate fix that modifies or replaces
+// an author line reintroduces its identifiers and is never flagged; a wholesale
+// revert of contributed behavior parks regardless of intent source. Returns nil
+// when nothing was reverted, when not fixing, or on any inability to compare.
+func assertFixPreservedAuthorWork(ctx context.Context, sctx *pipeline.StepContext, baseSHA, preFixHead, fixSummary string) *pipeline.StepOutcome {
+	preFixHead = strings.TrimSpace(preFixHead)
+	if preFixHead == "" {
+		return nil
+	}
+	postFixHead := strings.TrimSpace(sctx.Run.HeadSHA)
+	if postFixHead == "" || postFixHead == preFixHead {
+		// The fixer made no commit, so it removed nothing.
+		return nil
+	}
+
+	reverted, files := detectFixRoundRevert(ctx, sctx.WorkDir, baseSHA, preFixHead, postFixHead)
+	if len(reverted) == 0 {
+		return nil
+	}
+
+	sample := reverted
+	if len(sample) > 5 {
+		sample = sample[:5]
+	}
+	firstFile := filepath.Join("internal", "pipeline", "steps", "review.go")
+	if len(files) > 0 {
+		firstFile = files[0]
+	}
+	description := fmt.Sprintf(
+		"review fix round removed %d author-added line(s) across %d file(s) without rewriting them in place: the fixer reverted work the branch contributed instead of fixing it forward. Removed lines include:\n- %s\n\nAffected file(s): %s. Fix summary: %q. If this removal is intended, re-run after removing the code yourself; otherwise fix the finding forward so the contributed behavior is preserved.",
+		len(reverted), len(files), strings.Join(sample, "\n- "), strings.Join(files, ", "), strings.TrimSpace(fixSummary),
+	)
+	findingsJSON, _ := json.Marshal(Findings{
+		Items: []Finding{{
+			Severity:    "error",
+			File:        firstFile,
+			Description: description,
+			// A fixer that reverted contributed work is a call only a human can
+			// make; the pipeline must never auto-resolve it.
+			Action: types.ActionAskUser,
+		}},
+		Summary:       fmt.Sprintf("review fix reverted %d author-added line(s) across %d file(s)", len(reverted), len(files)),
+		RiskLevel:     "high",
+		RiskRationale: "review fix round removed contributed author lines without rewriting them",
+	})
+	sctx.Log(fmt.Sprintf("review backstop: fix round reverted %d author-added line(s), parking for review", len(reverted)))
+	return &pipeline.StepOutcome{
+		NeedsApproval: true,
+		AutoFixable:   false,
+		Findings:      string(findingsJSON),
+	}
 }
 
 func sanitizedPreviousFindingsForPrompt(raw string) string {
