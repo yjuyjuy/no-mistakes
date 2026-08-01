@@ -139,6 +139,69 @@ func TestDetectRebaseHunkDrop_FailsOpenOnMissingRevs(t *testing.T) {
 	}
 }
 
+// TestDetectFixRoundRevert covers the review-fix net-deleted-author-lines
+// backstop: a revert (net author-line count drops) is flagged, while an
+// in-place modification of an author line (unsafe -> safe, same count) and a
+// forward fix that changes call arguments (same count) are not.
+func TestDetectFixRoundRevert(t *testing.T) {
+	t.Parallel()
+
+	setup := func(t *testing.T, featureContent, fixContent string) (dir, base, pre, post string) {
+		t.Helper()
+		dir = initParityRepo(t)
+		writeFile(t, dir, "seed.txt", "seed\n")
+		gitCmd(t, dir, "add", "-A")
+		gitCmd(t, dir, "commit", "-m", "base")
+		base = gitCmd(t, dir, "rev-parse", "HEAD")
+		gitCmd(t, dir, "checkout", "-b", "feature")
+		writeFile(t, dir, "feature.txt", featureContent)
+		gitCmd(t, dir, "add", "-A")
+		gitCmd(t, dir, "commit", "-m", "feature")
+		pre = gitCmd(t, dir, "rev-parse", "HEAD")
+		writeFile(t, dir, "feature.txt", fixContent)
+		gitCmd(t, dir, "add", "-A")
+		gitCmd(t, dir, "commit", "-m", "fix")
+		post = gitCmd(t, dir, "rev-parse", "HEAD")
+		return dir, base, pre, post
+	}
+
+	t.Run("revert flagged", func(t *testing.T) {
+		t.Parallel()
+		dir, base, pre, post := setup(t,
+			"validateRecordPriceLayer(input);\nbuildRecordPriceLayer();\n",
+			"seedOnly();\n")
+		reverted, files := detectFixRoundRevert(context.Background(), dir, base, pre, post)
+		if len(reverted) == 0 {
+			t.Fatal("expected a net-deleted revert to be flagged")
+		}
+		if len(files) != 1 || files[0] != "feature.txt" {
+			t.Fatalf("expected feature.txt, got %v", files)
+		}
+	})
+
+	t.Run("in-place modification not flagged", func(t *testing.T) {
+		t.Parallel()
+		// unsafe -> safe: same author-added line count. This is the exact
+		// false-positive class that regressed TestConfigurableFixCommitMessageJourney.
+		dir, base, pre, post := setup(t, "unsafeValue = compute()\n", "safeValue = compute()\n")
+		reverted, _ := detectFixRoundRevert(context.Background(), dir, base, pre, post)
+		if len(reverted) != 0 {
+			t.Fatalf("in-place modification must not be flagged, got %v", reverted)
+		}
+	})
+
+	t.Run("forward fix not flagged", func(t *testing.T) {
+		t.Parallel()
+		dir, base, pre, post := setup(t,
+			"validateRecordPriceLayer(input);\nbuildRecordPriceLayer();\n",
+			"validateRecordPriceLayer(input, options);\nbuildRecordPriceLayer(config);\n")
+		reverted, _ := detectFixRoundRevert(context.Background(), dir, base, pre, post)
+		if len(reverted) != 0 {
+			t.Fatalf("forward fix must not be flagged, got %v", reverted)
+		}
+	})
+}
+
 // runGit runs git and fails the test on error; a thin wrapper used where the
 // output is not needed.
 func runGit(t *testing.T, dir string, args ...string) {

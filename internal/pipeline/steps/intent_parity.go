@@ -316,23 +316,24 @@ func sortedKeys(m map[string][]string) []string {
 }
 
 // detectFixRoundRevert reports author-added lines that a review fix round
-// silently reverted: content the branch introduced before the fix round
-// (base..preFixHead) that is gone from the tree after it (base..postFixHead),
-// and that the fix round did NOT merely rewrite in place.
+// silently reverted, using the net-deleted-author-lines definition: a file the
+// author net-added to (base..preFixHead) whose count of surviving significant
+// author-added lines then strictly DECREASED after the fix round
+// (base..postFixHead). It returns the specific author lines that vanished from
+// such files plus the files themselves.
 //
 // This is the held net-deleted-author-lines backstop (review.go's former HELD
 // TODO): it catches the same "silently reverted contributed work" class the
 // rebase parity check catches, but arriving through a review fixer round rather
 // than a rebase, and it parks regardless of intent source.
 //
-// Distinguishing a REVERT from a legitimate MODIFICATION is the whole design
-// problem - a fixer is allowed to rewrite an author line to fix a bug in it. The
-// discriminator is identifier reappearance: when a dropped author line's
-// identifiers all reappear among the lines the fix round newly ADDED
-// (preFixHead..postFixHead), the fixer rewrote the line in place (e.g.
-// validate(x) -> validate(x, opts)) and it is NOT reported. Only a line whose
-// identifiers do not reappear in the round's additions is a genuine removal of
-// contributed work, which parks for a human. It fails open on any git error.
+// The review fixer shares a single base commit with the pre-fix head (unlike a
+// rebase, which moves the base), so a per-file count of author-added lines is a
+// reliable, false-positive-resistant signal here. A legitimate forward fix that
+// rewrites an author line in place (unsafe -> safe, or changing call arguments)
+// keeps the count unchanged and is never flagged; only a net removal of
+// contributed lines - the wholesale revert the incident describes - decreases it
+// and parks. It fails open on any git error.
 func detectFixRoundRevert(ctx context.Context, workDir, base, preFixHead, postFixHead string) ([]string, []string) {
 	base = strings.TrimSpace(base)
 	preFixHead = strings.TrimSpace(preFixHead)
@@ -349,19 +350,66 @@ func detectFixRoundRevert(ctx context.Context, workDir, base, preFixHead, postFi
 		}
 	}
 
-	droppedLines, droppedFiles, err := detectDroppedAuthorLines(ctx, workDir, base, preFixHead, postFixHead)
-	if err != nil || len(droppedLines) == 0 {
+	preAdded, err := addedLinesByFile(ctx, workDir, base, preFixHead)
+	if err != nil || len(preAdded) == 0 {
+		return nil, nil
+	}
+	postAdded, err := addedLinesByFile(ctx, workDir, base, postFixHead)
+	if err != nil {
 		return nil, nil
 	}
 
-	// A dropped line whose identifiers all reappear among the lines the round
-	// newly added was rewritten in place (a legitimate forward fix), not
-	// reverted. Keep only genuine removals.
-	reverted := filterRewrittenInPlace(ctx, workDir, preFixHead, postFixHead, droppedLines)
-	if len(reverted) == 0 {
+	var revertedLines []string
+	fileSet := map[string]struct{}{}
+	seen := map[string]struct{}{}
+	for _, file := range sortedKeys(preAdded) {
+		preSignificant := significantLines(preAdded[file])
+		if len(preSignificant) == 0 {
+			continue
+		}
+		postSignificant := significantLines(postAdded[file])
+		// Net-deleted only: the file must carry strictly fewer surviving
+		// significant author-added lines than before the fix round.
+		if len(postSignificant) >= len(preSignificant) {
+			continue
+		}
+		survivors := map[string]struct{}{}
+		for _, line := range postSignificant {
+			survivors[line] = struct{}{}
+		}
+		for _, line := range preSignificant {
+			if _, ok := survivors[line]; ok {
+				continue
+			}
+			if _, ok := seen[line]; !ok {
+				seen[line] = struct{}{}
+				revertedLines = append(revertedLines, line)
+			}
+			fileSet[file] = struct{}{}
+		}
+	}
+	if len(revertedLines) == 0 {
 		return nil, nil
 	}
-	return reverted, droppedFiles
+	files := make([]string, 0, len(fileSet))
+	for file := range fileSet {
+		files = append(files, file)
+	}
+	sort.Strings(files)
+	return revertedLines, files
+}
+
+// significantLines returns the trimmed significant source lines from a slice of
+// raw added lines, preserving order.
+func significantLines(lines []string) []string {
+	var out []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if isSignificantSourceLine(trimmed) {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 // filterRewrittenInPlace keeps only the dropped lines that were genuinely
@@ -372,6 +420,12 @@ func detectFixRoundRevert(ctx context.Context, workDir, base, preFixHead, postFi
 // usable identifier is dropped from consideration (it cannot be attributed).
 // Fails open: on any git error it returns the input unchanged so a real drop is
 // never hidden by an inability to read the round's additions.
+//
+// This is used by the rebase parity path (detectRebaseHunkDrop), where the base
+// moves and a dropped hunk is a 1-for-1 line swap (the feature line replaced by
+// the upstream line, net count unchanged), so an identifier-level check is the
+// right discriminator. The review-fix path uses a net-count check instead
+// (detectFixRoundRevert), which is more robust when the base is fixed.
 func filterRewrittenInPlace(ctx context.Context, workDir, preHead, postHead string, dropped []string) []string {
 	if len(dropped) == 0 {
 		return nil
