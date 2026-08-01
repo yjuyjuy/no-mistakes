@@ -31,6 +31,13 @@ func (s *RebaseStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome,
 	if defaultBranch == "" {
 		defaultBranch = "main"
 	}
+	// Capture the branch head as it stood before any rebase in this run so a
+	// post-rebase content-parity check can prove the rebase preserved every hunk
+	// the branch proposed. Resolving a conflict by taking only the upstream side
+	// silently drops the feature's own edits while completing the rebase cleanly;
+	// this pre-rebase anchor is what makes that drop detectable. Best-effort: a
+	// failure just disables the parity check (fail-open), never blocks the rebase.
+	preRebaseHead, _ := git.HeadSHA(ctx, sctx.WorkDir)
 	branchTarget := ""
 	pushRemote := resolveUpstreamURL(sctx)
 	if branch != "" {
@@ -109,6 +116,9 @@ func (s *RebaseStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome,
 				return nil, err
 			}
 		}
+		if outcome := assertRebasePreservedIntent(ctx, sctx, preRebaseHead); outcome != nil {
+			return outcome, nil
+		}
 		return updateHeadSHA(ctx, sctx)
 	}
 
@@ -140,6 +150,13 @@ func (s *RebaseStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome,
 			AutoFixable:   true,
 			Findings:      string(findingsJSON),
 		}, nil
+	}
+
+	// Normal mode applied every target without a conflict, but a non-conflicting
+	// merge can still drop a hunk (e.g. an upstream commit that superseded the
+	// same region resolves in git's favor). Verify content parity before success.
+	if outcome := assertRebasePreservedIntent(ctx, sctx, preRebaseHead); outcome != nil {
+		return outcome, nil
 	}
 
 	return updateHeadSHA(ctx, sctx)
@@ -578,6 +595,77 @@ func dedupeRebaseFindings(findings []Finding) []Finding {
 		filtered = append(filtered, finding)
 	}
 	return filtered
+}
+
+// assertRebasePreservedIntent verifies the rebase preserved every hunk the
+// branch proposed. It runs after conflict resolution (agent or otherwise) and
+// after a clean multi-target rebase, comparing the pre-rebase branch content
+// against the resulting HEAD. When it detects that author-added lines were
+// silently dropped - the incident where a conflict resolution kept only the
+// upstream side, reverting the feature's own edits while unconflicted files
+// stayed intact and the branch still diffed non-empty - it returns a parked
+// (NeedsApproval, non-AutoFixable) ask-user finding naming the dropped lines and
+// commits. It never fails a legitimate rebase: the underlying detector requires
+// both a patch-id mismatch AND vanished author lines, and fails open on any git
+// error, so a correct resolution (or a clean rebase) returns nil and the run
+// proceeds. Returns nil when nothing was dropped.
+func assertRebasePreservedIntent(ctx context.Context, sctx *pipeline.StepContext, preRebaseHead string) *pipeline.StepOutcome {
+	preRebaseHead = strings.TrimSpace(preRebaseHead)
+	if preRebaseHead == "" {
+		return nil
+	}
+	postHead, err := git.HeadSHA(ctx, sctx.WorkDir)
+	if err != nil || strings.TrimSpace(postHead) == "" {
+		return nil
+	}
+	if postHead == preRebaseHead {
+		return nil
+	}
+	// The common ancestor of the pre-rebase branch tip and the rebased result is
+	// the base the branch's own additions are measured against. Using the merge
+	// base (rather than the recorded run base) keeps the comparison correct even
+	// when the branch already carried prior-run commits.
+	oldBase, err := git.Run(ctx, sctx.WorkDir, "merge-base", preRebaseHead, postHead)
+	if err != nil {
+		return nil
+	}
+	oldBase = strings.TrimSpace(oldBase)
+
+	drop := detectRebaseHunkDrop(ctx, sctx.WorkDir, oldBase, preRebaseHead, postHead)
+	if drop == nil {
+		return nil
+	}
+
+	sample := drop.lines
+	if len(sample) > 5 {
+		sample = sample[:5]
+	}
+	firstFile := filepath.Join("internal", "pipeline", "steps", "rebase.go")
+	if len(drop.files) > 0 {
+		firstFile = drop.files[0]
+	}
+	description := fmt.Sprintf(
+		"rebase dropped %d author-added line(s) across %d file(s): the conflict resolution kept the upstream side and reverted feature edits the branch introduced, so the rebased head no longer contains work the branch proposed. Dropped lines include:\n- %s\n\nAffected file(s): %s. Pre-rebase commit(s) with no post-rebase patch-id equivalent: %s. Resolve the rebase manually so both sides are preserved, then re-run.",
+		len(drop.lines), len(drop.files), strings.Join(sample, "\n- "), strings.Join(drop.files, ", "), strings.Join(shortSHAs(drop.commits), ", "),
+	)
+	findingsJSON, _ := json.Marshal(Findings{
+		Items: []Finding{{
+			Severity:    "error",
+			File:        firstFile,
+			Description: description,
+			// A dropped hunk is a data-loss workflow decision only a human can
+			// make; the pipeline must never auto-resolve it by re-running the
+			// same resolution that lost the work.
+			Action: types.ActionAskUser,
+		}},
+		Summary: fmt.Sprintf("rebase dropped %d author-added line(s) across %d file(s)", len(drop.lines), len(drop.files)),
+	})
+	sctx.Log(fmt.Sprintf("rebase parity check: %d author-added line(s) dropped, parking for review", len(drop.lines)))
+	return &pipeline.StepOutcome{
+		NeedsApproval: true,
+		AutoFixable:   false,
+		Findings:      string(findingsJSON),
+	}
 }
 
 // updateHeadSHA syncs the run's head SHA after rebase and checks for an empty diff.
