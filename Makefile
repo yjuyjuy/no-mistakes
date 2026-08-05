@@ -13,7 +13,7 @@ LDFLAGS := -X github.com/kunchenguid/no-mistakes/internal/buildinfo.Version=$(VE
            -X github.com/kunchenguid/no-mistakes/internal/buildinfo.TelemetryHost=$(UMAMI_HOST) \
            -X github.com/kunchenguid/no-mistakes/internal/buildinfo.TelemetryWebsiteID=$(UMAMI_WEBSITE_ID)
 
-.PHONY: build dist install test e2e e2e-record lint fmt clean docs docs-build docs-preview demo skill skill-check
+.PHONY: build dist install install-fork test e2e e2e-record lint fmt clean docs docs-build docs-preview demo skill skill-check
 
 DIST_DIR ?= dist
 INSTALL_BIN := $(shell go env GOPATH)/bin/no-mistakes
@@ -47,6 +47,15 @@ install: build
 	install -m 755 bin/no-mistakes $(INSTALL_BIN)
 	$(INSTALL_BIN) daemon stop
 	$(INSTALL_BIN) daemon start
+
+# Fork-safe install: build and install this fork's binary to the MANAGED path
+# (${NM_HOME:-~/.no-mistakes}/bin), relink the PATH entry, and restart the
+# daemon through it. This is the deliberate replacement for `no-mistakes
+# update`, which pulls the UPSTREAM release and clobbers the fork build. The
+# daemon restart refuses while pipeline runs are active (drain first); pass
+# FORCE=1 to override. See scripts/install-fork.sh for full behavior.
+install-fork:
+	scripts/install-fork.sh $(if $(FORCE),--force) $(if $(SKIP_RESTART),--skip-restart)
 
 test:
 	go test -race ./...
