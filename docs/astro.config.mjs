@@ -37,6 +37,7 @@ export default defineConfig({
           label: "Guides",
           items: [
             { label: "Configuration", slug: "guides/configuration" },
+            { label: "Size Profiles", slug: "guides/size-profiles" },
             { label: "Choosing an Agent", slug: "guides/agents" },
             { label: "Provider Integration", slug: "guides/provider-integration" },
             { label: "Setup Wizard", slug: "guides/setup-wizard" },

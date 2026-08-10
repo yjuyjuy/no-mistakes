@@ -1,0 +1,41 @@
+# no-mistakes SMALL validation profile.
+#
+# Rigor proportional to a small ticket: a one-file typo, a copy tweak, a
+# trivial config change. Validation should be fast and cheap. A small change
+# has little surface for a subtle regression, so review runs on a small model,
+# the auto-fix loops are short, and CI monitoring gives up sooner.
+#
+# This file is materialized into a dedicated NM_HOME root by
+# scripts/nm-size-profiles.sh. See docs/src/content/docs/guides/size-profiles.md.
+#
+# Model names here are Claude Code aliases; swap the agent block to match the
+# agent your machine actually runs (run `no-mistakes doctor` to see it).
+
+agent: auto
+
+# Cheapest capable model for every step by default.
+agent_args_override:
+  claude:
+    - --model
+    - haiku
+  codex:
+    - -m
+    - gpt-5.4-mini
+
+# Short auto-fix loops: a small change rarely needs many fix rounds, and a
+# failure that survives one or two attempts is worth a human look.
+auto_fix:
+  rebase: 1
+  review: 0
+  test: 1
+  document: 1
+  lint: 1
+  ci: 1
+
+# A small change should land fast; stop babysitting an idle PR sooner.
+ci_timeout: "24h"
+
+# Keep the housekeeping gates deterministic and cheap.
+test:
+  evidence:
+    store_in_repo: false
