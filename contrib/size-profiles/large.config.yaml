@@ -1,0 +1,77 @@
+# no-mistakes LARGE validation profile.
+#
+# Maximum rigor for a large or high-risk change: a broad refactor, a
+# cross-cutting feature, anything that touches many files or load-bearing
+# code. Every reasoning-heavy step runs on the strongest model, review adds
+# high reasoning effort, auto-fix loops are deeper, and CI monitoring is
+# patient so a long-running PR is never abandoned early.
+#
+# This file is materialized into a dedicated NM_HOME root by
+# scripts/nm-size-profiles.sh. See docs/src/content/docs/guides/size-profiles.md.
+#
+# Model names here are Claude Code aliases; swap the agent block to match the
+# agent your machine actually runs (run `no-mistakes doctor` to see it).
+
+agent: auto
+
+# Strong default model for every step.
+agent_args_override:
+  claude:
+    - --model
+    - opus
+  codex:
+    - -m
+    - gpt-5.4
+
+# Pay for maximum reasoning depth on the steps where a large change is most
+# likely to hide a subtle mistake: the adversarial review, the targeted test
+# validation, and the rebase conflict resolution. Cheaper housekeeping steps
+# (document, lint) fall back to the strong default above without the extra
+# reasoning-effort premium.
+#
+# Note: a listed step+agent REPLACES that agent's agent_args_override for the
+# step, so each per-step block must repeat every flag the step needs.
+agent_args_override_per_step:
+  review:
+    claude:
+      - --model
+      - opus
+    codex:
+      - -m
+      - gpt-5.4
+      - -c
+      - model_reasoning_effort="high"
+  test:
+    claude:
+      - --model
+      - opus
+    codex:
+      - -m
+      - gpt-5.4
+      - -c
+      - model_reasoning_effort="high"
+  rebase:
+    claude:
+      - --model
+      - opus
+    codex:
+      - -m
+      - gpt-5.4
+      - -c
+      - model_reasoning_effort="high"
+
+# Deeper auto-fix loops for a large change with more moving parts.
+auto_fix:
+  rebase: 5
+  review: 0
+  test: 5
+  document: 3
+  lint: 3
+  ci: 5
+
+# Be patient with a large PR: never abandon an actively-updated one early.
+ci_timeout: "336h"
+
+test:
+  evidence:
+    store_in_repo: false

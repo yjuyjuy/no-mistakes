@@ -1,0 +1,56 @@
+# no-mistakes MEDIUM validation profile.
+#
+# The default balance for an everyday feature or bug fix that touches a handful
+# of files. A mid-size model handles most steps, but the adversarial review
+# step is promoted to the strong model because catching a subtle logic mistake
+# is where rigor pays off most. Auto-fix loops use the standard depth.
+#
+# This file is materialized into a dedicated NM_HOME root by
+# scripts/nm-size-profiles.sh. See docs/src/content/docs/guides/size-profiles.md.
+#
+# Model names here are Claude Code aliases; swap the agent block to match the
+# agent your machine actually runs (run `no-mistakes doctor` to see it).
+
+agent: auto
+
+# Balanced default model for every step.
+agent_args_override:
+  claude:
+    - --model
+    - sonnet
+  codex:
+    - -m
+    - gpt-5.4
+
+# Promote the review step (and its fix loop enabler) to the strong model:
+# review is the adversarial gate where a deeper model earns its cost. Every
+# other step keeps the balanced default above.
+#
+# Note: a listed step+agent REPLACES that agent's agent_args_override for the
+# step, so each per-step block must repeat every flag the step needs.
+agent_args_override_per_step:
+  review:
+    claude:
+      - --model
+      - opus
+    codex:
+      - -m
+      - gpt-5.4
+      - -c
+      - model_reasoning_effort="high"
+
+# Standard auto-fix depth.
+auto_fix:
+  rebase: 3
+  review: 0
+  test: 3
+  document: 3
+  lint: 3
+  ci: 3
+
+# Default CI monitoring window.
+ci_timeout: "168h"
+
+test:
+  evidence:
+    store_in_repo: false
