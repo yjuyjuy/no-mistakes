@@ -74,10 +74,10 @@ Default agent for all repos and setup-wizard suggestions. Can be overridden per-
 |         |                                                                                             |
 | ------- | ------------------------------------------------------------------------------------------- |
 | Type    | `string` or `string[]`                                                                      |
-| Values  | `auto`, `claude`, `codex`, `rovodev`, `opencode`, `pi`, `copilot`, `cursor`, `acp:<target>` |
+| Values  | `auto`, `claude`, `codex`, `rovodev`, `opencode`, `pi`, `copilot`, `jcode`, `cursor`, `acp:<target>` |
 | Default | `auto`                                                                                      |
 
-`auto` resolves to the first supported native agent or ACP alias in this order: `claude`, `codex`, `opencode`, `acli` with `rovodev` support, `pi`, `copilot`, then `cursor`.
+`auto` resolves to the first supported native agent or ACP alias in this order: `claude`, `codex`, `opencode`, `acli` with `rovodev` support, `pi`, `copilot`, `jcode`, then `cursor`.
 `cursor` is an ACP alias for the `cursor` target with default command `cursor-agent acp`.
 With default paths, `auto` only selects it when both `cursor-agent` and `acpx` resolve; `acp_registry_overrides.cursor` and `acpx_path` replace those respective defaults during availability checks.
 `acp:<target>` uses the user-installed `acpx` binary to run an ACP target, for example `acp:gemini`; `acp:cursor` uses the same default command as `cursor`.
@@ -221,7 +221,7 @@ Use this to pay for a strong model where the work is hard, such as review, while
 | ------- | -------------------------------------------------------- |
 | Type    | `map[string]map[string][]string` (step -> agent -> flags) |
 | Steps   | `intent`, `rebase`, `review`, `test`, `document`, `lint`, `push`, `pr`, `ci` |
-| Agents  | `claude`, `codex`, `pi`, `copilot`                        |
+| Agents  | `claude`, `codex`, `pi`, `copilot`, `jcode`              |
 | Default | Empty (every step uses `agent_args_override`)             |
 
 A listed step and agent **replaces** that agent's `agent_args_override` entry for the duration of that step; it is not appended to it, so each profile must list every flag that step needs.

@@ -36,6 +36,7 @@ func TestGateStepCannotStartRecursivePipeline(t *testing.T) {
 		{name: "opencode", agent: "opencode", executable: "opencode", expectedPhase: "review", completes: true},
 		{name: "pi", agent: "pi", executable: "pi", expectedPhase: "review"},
 		{name: "copilot", agent: "copilot", executable: "copilot", expectedPhase: "review"},
+		{name: "jcode", agent: "jcode", executable: "jcode", expectedPhase: "review"},
 		{name: "cursor", agent: "cursor", executable: "acpx", expectedPhase: "review"},
 		{name: "explicit-acp", agent: "acp:fixture", executable: "acpx", expectedPhase: "review"},
 	}
