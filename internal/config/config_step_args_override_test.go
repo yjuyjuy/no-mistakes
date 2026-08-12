@@ -60,6 +60,34 @@ agent_args_override_per_step:
 	}
 }
 
+func TestLoadGlobal_AgentArgsOverridePerStep_Jcode(t *testing.T) {
+	// jcode rebuilds its argv per invocation, so a per-step model pin must be
+	// accepted and returned for that step. This is the split the ACP bridge
+	// cannot express, which is why jcode needs a native adapter.
+	path := writeGlobalConfig(t, `agent: jcode
+agent_args_override:
+  jcode:
+    - -m
+    - claude-sonnet-4-6
+agent_args_override_per_step:
+  review:
+    jcode:
+      - -m
+      - claude-opus-4-8
+`)
+	cfg, err := LoadGlobal(path)
+	if err != nil {
+		t.Fatalf("LoadGlobal: %v", err)
+	}
+	merged := Merge(cfg, &RepoConfig{})
+	if got := merged.AgentArgsForStep(types.StepReview); !reflect.DeepEqual(got, map[string][]string{"jcode": {"-m", "claude-opus-4-8"}}) {
+		t.Errorf("AgentArgsForStep(review) = %v, want the opus per-step pin", got)
+	}
+	if got := merged.AgentArgsFor(types.AgentJcode); !reflect.DeepEqual(got, []string{"-m", "claude-sonnet-4-6"}) {
+		t.Errorf("global AgentArgsFor(jcode) = %v, want the sonnet default untouched", got)
+	}
+}
+
 func TestAgentArgsForStep_NilConfigAndMissingMap(t *testing.T) {
 	var nilCfg *Config
 	if got := nilCfg.AgentArgsForStep(types.StepReview); got != nil {

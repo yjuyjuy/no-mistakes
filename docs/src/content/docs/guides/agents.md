@@ -47,6 +47,7 @@ By default that directory is temporary and local to the machine; repos can opt i
 | OpenCode | `opencode` | Persistent HTTP server, SSE streaming |
 | Pi | `pi` | Subprocess per invocation, JSONL events |
 | Copilot | `copilot` | Subprocess per invocation, JSONL events |
+| Jcode | `jcode` | Subprocess per invocation, NDJSON events |
 | Cursor | `cursor-agent` + `acpx` | `cursor-agent acp` through the ACP bridge |
 | ACP target | `acpx` | Optional user-installed ACP bridge |
 
@@ -286,6 +287,15 @@ It also adds `--no-color` and `--no-ask-user` so the run is non-interactive, plu
 Any `agent_args_override.copilot` flags are inserted before no-mistakes' managed flags, so user choices such as `--model` or `--effort` take effect.
 Reads JSONL events from stdout, streaming incremental `assistant.message_delta` text to the TUI and capturing the final `assistant.message` content.
 The Copilot CLI has no output-schema flag, so when structured output is requested no-mistakes injects the JSON schema into the prompt and validates the final text response with the same JSON fence and bare-object fallback used by Pi and Rovo Dev.
+
+## Jcode
+
+Spawns a `jcode` subprocess for each invocation with `run --ndjson --quiet --no-update --no-selfdev`, delivering the prompt as the final positional after a `--` separator.
+Any `agent_args_override.jcode` flags are inserted between the `run` subcommand and no-mistakes' managed flags, so operator choices such as `-m <model>` take effect; `jcode model list` prints the accepted model names.
+Because the command line is rebuilt on every invocation, `jcode` is a first-class per-step target in [`agent_args_override_per_step`](/no-mistakes/reference/global-config/#agent_args_override_per_step), unlike the ACP bridge which cannot express per-invocation flags.
+Reads NDJSON events from stdout, streaming incremental `text_delta` text to the TUI, summing the per-round `tokens` events for usage, and capturing the final `done` text.
+The `run` subcommand has no output-schema flag, so when structured output is requested no-mistakes injects the JSON schema into the prompt and validates the final text response with the same JSON fence and bare-object fallback used by Pi and Copilot.
+For review-loop reuse, Jcode resumes the reported `session_id` with `jcode run --resume <id>`, so the reviewer and fixer keep role-isolated durable sessions.
 
 ## ACP aliases
 

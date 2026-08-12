@@ -328,7 +328,7 @@ const defaultConfigYAML = `# no-mistakes global configuration
 
 # Agent to use for code generation. This may also be an ordered fallback list,
 # for example: agent: [codex, claude]
-# Options: auto, claude, codex, rovodev, opencode, pi, copilot, cursor, acp:<target>
+# Options: auto, claude, codex, rovodev, opencode, pi, copilot, jcode, cursor, acp:<target>
 # "auto" detects the first available native agent or ACP alias on your system
 # "cursor" is an ACP alias for acp:cursor using cursor-agent acp via acpx
 # "acp:cursor" also uses that Cursor default command
@@ -450,6 +450,7 @@ var defaultBinary = map[types.AgentName]string{
 	types.AgentOpenCode: "opencode",
 	types.AgentPi:       "pi",
 	types.AgentCopilot:  "copilot",
+	types.AgentJcode:    "jcode",
 }
 
 // nativeAgentProbeOrder is the priority order for auto-detecting native agents.
@@ -460,6 +461,7 @@ var nativeAgentProbeOrder = []types.AgentName{
 	types.AgentRovoDev,
 	types.AgentPi,
 	types.AgentCopilot,
+	types.AgentJcode,
 }
 
 func isACPAgent(name types.AgentName) bool {
@@ -645,7 +647,7 @@ func (c *Config) resolveConfiguredAgent(ctx context.Context, name types.AgentNam
 		return resolved, err == nil, "auto", err
 	}
 	if _, ok := defaultBinary[name]; !ok && !isACPAgent(name) {
-		return "", false, string(name), fmt.Errorf("unknown agent %q; valid options: auto, claude, codex, rovodev, opencode, pi, copilot, cursor, acp:<target> (set 'agent' in ~/.no-mistakes/config.yaml)", name)
+		return "", false, string(name), fmt.Errorf("unknown agent %q; valid options: auto, claude, codex, rovodev, opencode, pi, copilot, jcode, cursor, acp:<target> (set 'agent' in ~/.no-mistakes/config.yaml)", name)
 	}
 	if isACPAgent(name) {
 		available, bins, err := c.acpAvailable(name, lookPath)
@@ -825,6 +827,7 @@ var agentArgsOverrideAgents = map[string]bool{
 	string(types.AgentOpenCode): true,
 	string(types.AgentPi):       true,
 	string(types.AgentCopilot):  true,
+	string(types.AgentJcode):    true,
 }
 
 // reservedAgentArgs lists flags that no-mistakes manages internally and that
@@ -877,6 +880,14 @@ var reservedAgentArgs = map[string]map[string]bool{
 		"--output-format": true,
 		"--no-color":      true,
 	},
+	string(types.AgentJcode): {
+		"run":          true,
+		"--ndjson":     true,
+		"--json":       true,
+		"--quiet":      true,
+		"--resume":     true,
+		"--no-selfdev": true,
+	},
 }
 
 // validateAgentArgsOverride ensures each agent key is a known agent name and
@@ -885,7 +896,7 @@ var reservedAgentArgs = map[string]map[string]bool{
 func validateAgentArgsOverride(override map[string][]string) error {
 	for name, args := range override {
 		if !agentArgsOverrideAgents[name] {
-			return fmt.Errorf("invalid agent name in agent_args_override: %q (valid: claude, codex, rovodev, opencode, pi, copilot)", name)
+			return fmt.Errorf("invalid agent name in agent_args_override: %q (valid: claude, codex, rovodev, opencode, pi, copilot, jcode)", name)
 		}
 		reserved := reservedAgentArgs[name]
 		for i, arg := range args {
@@ -914,6 +925,7 @@ var perStepArgsOverrideAgents = map[string]bool{
 	string(types.AgentCodex):   true,
 	string(types.AgentPi):      true,
 	string(types.AgentCopilot): true,
+	string(types.AgentJcode):   true,
 }
 
 // projectSettingsPinnedArgs lists, per agent, the flags that participate in the
@@ -941,7 +953,7 @@ func validateAgentArgsOverridePerStep(override map[string]map[string][]string) e
 		}
 		for name, args := range byAgent {
 			if !perStepArgsOverrideAgents[name] {
-				return fmt.Errorf("invalid agent name in agent_args_override_per_step.%s: %q (valid: claude, codex, pi, copilot)", step, name)
+				return fmt.Errorf("invalid agent name in agent_args_override_per_step.%s: %q (valid: claude, codex, pi, copilot, jcode)", step, name)
 			}
 			reserved := reservedAgentArgs[name]
 			pinned := projectSettingsPinnedArgs[name]

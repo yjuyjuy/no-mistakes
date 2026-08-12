@@ -113,3 +113,19 @@ func TestPiBuildArgs_UsesPerStepProfile(t *testing.T) {
 		t.Errorf("buildArgs = %v, want the managed flags preserved", args)
 	}
 }
+
+func TestJcodeBuildArgs_UsesPerStepProfile(t *testing.T) {
+	a := &jcodeAgent{bin: "jcode", extraArgs: []string{"-m", "claude-sonnet-4-6"}}
+	args := a.withStepArgs(RunOpts{StepArgsOverride: map[string][]string{"jcode": {"-m", "claude-opus-4-8"}}}).
+		buildArgs("review the diff", "")
+	if !argsContainPair(args, "-m", "claude-opus-4-8") {
+		t.Errorf("buildArgs = %v, want the per-step model", args)
+	}
+	if strings.Contains(strings.Join(args, " "), "claude-sonnet-4-6") {
+		t.Errorf("buildArgs = %v, must not keep the global model when a per-step profile applies", args)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--ndjson") || !strings.Contains(joined, "--quiet") {
+		t.Errorf("buildArgs = %v, want the managed flags preserved", args)
+	}
+}

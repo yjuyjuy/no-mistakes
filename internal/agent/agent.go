@@ -843,8 +843,10 @@ func NewWithOptions(name types.AgentName, bin string, extraArgs []string, opts O
 		return &piAgent{bin: bin, extraArgs: extraArgs}, nil
 	case types.AgentCopilot:
 		return &copilotAgent{bin: bin, extraArgs: extraArgs}, nil
+	case types.AgentJcode:
+		return &jcodeAgent{bin: bin, extraArgs: extraArgs}, nil
 	default:
-		return nil, fmt.Errorf("unknown agent %q; valid options: auto, claude, codex, rovodev, opencode, pi, copilot, cursor, acp:<target> (set 'agent' in ~/.no-mistakes/config.yaml)", name)
+		return nil, fmt.Errorf("unknown agent %q; valid options: auto, claude, codex, rovodev, opencode, pi, copilot, jcode, cursor, acp:<target> (set 'agent' in ~/.no-mistakes/config.yaml)", name)
 	}
 }
 
