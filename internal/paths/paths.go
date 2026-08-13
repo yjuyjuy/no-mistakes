@@ -57,6 +57,11 @@ func (p *Paths) TelemetryGateFile() string {
 	return filepath.Join(p.root, "telemetry-gate.json")
 }
 
+// EvalDir holds automatically collected local evaluation cases, shared object
+// pools, and their separate registry. EnsureDirs leaves creation to collection
+// and eval commands so disabling provenance and auto-capture creates no state.
+func (p *Paths) EvalDir() string { return filepath.Join(p.root, "eval") }
+
 func (p *Paths) ReposDir() string { return filepath.Join(p.root, "repos") }
 func (p *Paths) RepoDir(repoID string) string {
 	return filepath.Join(p.root, "repos", repoID+".git")
