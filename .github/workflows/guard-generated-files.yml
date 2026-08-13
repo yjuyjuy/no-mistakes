@@ -19,9 +19,12 @@ jobs:
     runs-on: ubuntu-latest
     # release-please owns CHANGELOG.md and .release-please-manifest.json; its PR
     # is the one legitimate place those files change, so we exempt its author.
+    # yjuyjuy is the fork owner; upstream-sync maintenance PRs on this fork
+    # legitimately carry release-please-owned file changes, so we exempt it too.
     if: >-
       github.event.pull_request.user.login != 'github-actions[bot]' &&
-      github.event.pull_request.user.login != 'release-please[bot]'
+      github.event.pull_request.user.login != 'release-please[bot]' &&
+      github.event.pull_request.user.login != 'yjuyjuy'
     steps:
       - uses: actions/checkout@v6
         with:
