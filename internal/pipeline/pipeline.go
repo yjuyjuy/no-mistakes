@@ -14,18 +14,20 @@ var ErrFatalGateReconciliation = errors.New("fatal gate reconciliation")
 
 // StepContext provides shared resources to pipeline steps during execution.
 type StepContext struct {
-	Ctx              context.Context
-	Run              *db.Run
-	Repo             *db.Repo
-	WorkDir          string
-	Agent            agent.Agent
-	Config           *config.Config
-	DB               *db.DB
-	Log              func(string) // discrete log line (newline-terminated, user-visible + file)
-	LogChunk         func(string) // raw streaming chunk (user-visible + file)
-	LogFile          func(string) // file-only log callback (not shown to user)
-	Fixing           bool         // true when re-executing after a "fix" action
-	PreviousFindings string       // JSON findings from the previous execution (set during fix loop)
+	Ctx                   context.Context
+	Run                   *db.Run
+	Repo                  *db.Repo
+	WorkDir               string
+	Agent                 agent.Agent
+	Config                *config.Config
+	DB                    *db.DB
+	Log                   func(string) // discrete log line (newline-terminated, user-visible + file)
+	LogChunk              func(string) // raw streaming chunk (user-visible + file)
+	LogFile               func(string) // file-only log callback (not shown to user)
+	Fixing                bool         // true when re-executing after a "fix" action
+	SkipFixExecution      bool         // replay an already-completed fix round's review turn only
+	ReviewStartingHeadSHA string
+	PreviousFindings      string // JSON findings from the previous execution (set during fix loop)
 	// StepResultID is the DB row ID of the current step's step_results record.
 	// Steps use it to query their own round history for multi-round prompts.
 	StepResultID string
@@ -38,22 +40,26 @@ type StepContext struct {
 	UserIntent string
 	// IntentSource records the provenance of UserIntent so steps can weigh
 	// its authority. db.RunIntentSourceAgent ("agent") means the driving
-	// agent supplied it explicitly via `axi run --intent` (authoritative
-	// acceptance criteria); an agent name ("claude", "codex", ...) means it
-	// was inferred from a transcript (a hint). Empty when no intent exists.
+	// agent supplied it explicitly via `axi run --intent`; db.RunIntentSourceRerun
+	// ("rerun") means that authoritative intent was inherited. Both are
+	// authoritative acceptance criteria; an agent name ("claude", "codex", ...)
+	// means it was inferred from a transcript (a hint). Empty when no intent exists.
 	IntentSource string
-	// Sessions manages the run's durable review-loop agent sessions
-	// (reviewer and fixer roles). nil runs every invocation cold.
+	// Sessions manages the run's durable review-fixer session. The session
+	// machinery remains role-generic for legacy recovery; nil runs every
+	// invocation cold.
 	Sessions *RunSessions
 	// Shared carries in-memory run-scoped results one step hands to a later
 	// step in the same run (e.g. the combined document+lint pass).
-	Shared *RunShared
+	Shared             *RunShared
+	CIReadinessChanged func(ready, declaredNoCI bool)
 }
 
 // RunAgentSession executes one turn of a durable review-loop role session,
-// running cold when sessions are unavailable. Only the review step's
-// reviewer/fixer turns use this; every other agent invocation goes through
-// sctx.Agent.Run directly and stays session-isolated.
+// running cold when sessions are unavailable. Only the review step's fixer
+// turns use this; every other agent invocation - including every review turn,
+// which must stay independent of the session that prescribed the fixes under
+// review - goes through sctx.Agent.Run directly and stays session-isolated.
 func (sctx *StepContext) RunAgentSession(role SessionRole, opts agent.RunOpts) (*agent.Result, error) {
 	if sctx.Sessions == nil {
 		return sctx.Agent.Run(sctx.Ctx, opts)
