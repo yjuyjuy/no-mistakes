@@ -20,6 +20,36 @@ func writeGlobalConfig(t *testing.T, data string) string {
 	return path
 }
 
+func TestLoadGlobal_AgentArgsOverridePerStep_JcodeEffortIsAccepted(t *testing.T) {
+	// The jcode adapter translates --effort into the JCODE_*_REASONING_EFFORT
+	// env vars, so both the global override and per-step profiles must accept it
+	// as an ordinary operator flag, in either spelling.
+	path := writeGlobalConfig(t, `agent_args_override:
+  jcode:
+    - -m
+    - claude-sonnet-5
+    - --effort
+    - low
+agent_args_override_per_step:
+  review:
+    jcode:
+      - -m
+      - claude-opus-4-8
+      - --effort=high
+`)
+	cfg, err := LoadGlobal(path)
+	if err != nil {
+		t.Fatalf("LoadGlobal: %v", err)
+	}
+	merged := Merge(cfg, &RepoConfig{})
+	if got := merged.AgentArgsFor(types.AgentJcode); !reflect.DeepEqual(got, []string{"-m", "claude-sonnet-5", "--effort", "low"}) {
+		t.Errorf("global AgentArgsFor(jcode) = %v", got)
+	}
+	if got := merged.AgentArgsForStep(types.StepReview); !reflect.DeepEqual(got, map[string][]string{"jcode": {"-m", "claude-opus-4-8", "--effort=high"}}) {
+		t.Errorf("AgentArgsForStep(review) = %v", got)
+	}
+}
+
 func TestLoadGlobal_AgentArgsOverridePerStep(t *testing.T) {
 	path := writeGlobalConfig(t, `agent_args_override:
   codex:

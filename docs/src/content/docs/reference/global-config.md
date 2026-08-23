@@ -162,7 +162,7 @@ Use this to set model selection, service tier, reasoning effort, permission mode
 |         |                                                           |
 | ------- | --------------------------------------------------------- |
 | Type    | `map[string][]string`                                     |
-| Keys    | `claude`, `codex`, `rovodev`, `opencode`, `pi`, `copilot` |
+| Keys    | `claude`, `codex`, `rovodev`, `opencode`, `pi`, `copilot`, `jcode` |
 | Default | Empty (no extra flags)                                    |
 
 User-supplied flags are normally inserted ahead of no-mistakes' managed flags, so your choices usually take precedence. Security suppression selected by trusted [`disable_project_settings`](/no-mistakes/reference/repo-config/#disable_project_settings) may be placed first while preserving a compatible operator pin. A few flags are reserved because no-mistakes depends on them to communicate with the agent - setting any of these returns a config error on load:
@@ -175,6 +175,7 @@ User-supplied flags are normally inserted ahead of no-mistakes' managed flags, s
 | `opencode` | `serve`, `--hostname`, `--port`, `--print-logs`                                                             |
 | `pi`       | `--mode`, `--no-session`                                                                                    |
 | `copilot`  | `-p`, `--prompt`, `--output-format`, `--no-color`                                                          |
+| `jcode`    | `run`, `--ndjson`, `--json`, `--quiet`, `--resume`, `--no-selfdev`                                           |
 
 For structured `codex` runs, no-mistakes also appends its own `--output-schema <tempfile>` after your overrides. Treat that flag as managed even though config validation does not currently reject it.
 The Claude and Codex session-control forms are reserved so no-mistakes can keep review-loop conversations deterministic: review turns stay session-free while the fixer keeps its own isolated durable session.
@@ -183,6 +184,7 @@ Smart defaults:
 
 - For `claude`, supplying `--permission-mode` (or `--dangerously-skip-permissions`) suppresses the default `--dangerously-skip-permissions`.
 - For `codex`, supplying `--ask-for-approval`, `--sandbox`, or `--dangerously-bypass-approvals-and-sandbox` suppresses the default `--dangerously-bypass-approvals-and-sandbox`.
+- For `jcode`, `--effort <level>` is a managed pseudo-flag: `jcode run` has no `--effort` flag, so no-mistakes translates it into the `JCODE_ANTHROPIC_REASONING_EFFORT` / `JCODE_OPENAI_REASONING_EFFORT` environment variables jcode reads and keeps it out of argv. Accepted levels are `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `default` (jcode's own model default). When no effort is configured, jcode invocations run at `low`, matching the old claude-era pipeline override.
 
 Permission and sandbox flags affect the underlying agent, but they do not disable no-mistakes' pipeline prompt steering.
 Pipeline agents are still told to keep intentional writes inside the worktree and avoid mutating system state outside it.
@@ -212,6 +214,11 @@ agent_args_override:
   pi:
     - --provider
     - google
+  jcode:
+    - -m
+    - claude-sonnet-5
+    - --effort
+    - low
 ```
 
 For Codex, `service_tier` and `model_reasoning_effort` tune different things: `service_tier` selects the speed or priority lane, while `model_reasoning_effort` selects reasoning depth. no-mistakes reloads global config while setting up each run, so edits made before `no-mistakes axi run` apply to that run. To vary the profile per pipeline step within one run, use [`agent_args_override_per_step`](#agent_args_override_per_step).

@@ -654,6 +654,9 @@ log_level: info
 
 # Extra native agent CLI flags (optional, global only)
 # Codex service_tier controls speed/priority; model_reasoning_effort controls reasoning depth.
+# jcode has no --effort CLI flag: no-mistakes translates this pseudo-flag into
+# the JCODE_*_REASONING_EFFORT env vars jcode reads, and defaults it to "low"
+# (the old claude-era pipeline override) when unset.
 # agent_args_override:
 #   codex:
 #     - -m
@@ -662,13 +665,18 @@ log_level: info
 #     - service_tier="priority"
 #     - -c
 #     - model_reasoning_effort="low"
+#   jcode:
+#     - -m
+#     - claude-sonnet-5
+#     - --effort
+#     - low
 #
 # Per-step agent flag profiles (optional, global only). Keyed step -> agent ->
 # flags; a listed step/agent REPLACES its agent_args_override entry for that
 # step only, so you can pay for a strong model where it matters and a cheap one
 # elsewhere. Steps and agents without an entry keep the global flags.
-# Supported for claude, codex, pi, and copilot (agents whose argv is rebuilt on
-# every invocation).
+# Supported for claude, codex, pi, copilot, and jcode (agents whose argv is
+# rebuilt on every invocation).
 # agent_args_override_per_step:
 #   review:
 #     codex:

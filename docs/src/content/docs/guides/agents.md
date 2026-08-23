@@ -294,6 +294,8 @@ The Copilot CLI has no output-schema flag, so when structured output is requeste
 
 Spawns a `jcode` subprocess for each invocation with `run --ndjson --quiet --no-update --no-selfdev`, delivering the prompt as the final positional after a `--` separator.
 Any `agent_args_override.jcode` flags are inserted between the `run` subcommand and no-mistakes' managed flags, so operator choices such as `-m <model>` take effect; `jcode model list` prints the accepted model names.
+`jcode run` has no `--effort` flag, so no-mistakes accepts a managed `--effort <level>` pseudo-flag in `agent_args_override.jcode` and per-step profiles and translates it into the `JCODE_ANTHROPIC_REASONING_EFFORT` / `JCODE_OPENAI_REASONING_EFFORT` environment variables jcode reads for reasoning depth; the pseudo-flag never reaches argv.
+When no effort is configured, jcode invocations run at `low` effort, matching the old claude-era pipeline override (`agent_args_override.claude: --effort low`); pin `--effort high` (or `--effort default` to restore jcode's model default) when a step needs more depth.
 Because the command line is rebuilt on every invocation, `jcode` is a first-class per-step target in [`agent_args_override_per_step`](/no-mistakes/reference/global-config/#agent_args_override_per_step), unlike the ACP bridge which cannot express per-invocation flags.
 Reads NDJSON events from stdout, streaming incremental `text_delta` text to the TUI, summing the per-round `tokens` events for usage, and capturing the final `done` text.
 The `run` subcommand has no output-schema flag, so when structured output is requested no-mistakes injects the JSON schema into the prompt and validates the final text response with the same JSON fence and bare-object fallback used by Pi and Copilot.
