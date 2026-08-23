@@ -2,9 +2,85 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestJcodeEffortLevel_ParsesPinnedLevel(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"no effort pinned", []string{"-m", "claude-sonnet-5"}, ""},
+		{"separate value", []string{"--effort", "high"}, "high"},
+		{"equals form", []string{"--effort=medium"}, "medium"},
+		{"mixed with model", []string{"-m", "claude-opus-4-8", "--effort", "low"}, "low"},
+		{"last wins separate", []string{"--effort", "low", "--effort", "high"}, "high"},
+		{"last wins equals", []string{"--effort=low", "--effort=xhigh"}, "xhigh"},
+		{"dangling flag keeps prior pin", []string{"--effort", "low", "--effort"}, "low"},
+		{"operator value passes through untranslated", []string{"--effort", "Default"}, "Default"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := jcodeEffortLevel(tt.args); got != tt.want {
+				t.Errorf("jcodeEffortLevel(%v) = %q, want %q", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestJcodeEffectiveEffort_DefaultsLow(t *testing.T) {
+	if got := jcodeEffectiveEffort(nil); got != "low" {
+		t.Errorf("jcodeEffectiveEffort(nil) = %q, want the old claude-era default low", got)
+	}
+	if got := jcodeEffectiveEffort([]string{"-m", "claude-sonnet-5"}); got != "low" {
+		t.Errorf("jcodeEffectiveEffort with model only = %q, want low", got)
+	}
+}
+
+func TestJcodeEffectiveEffort_HonorsPinnedLevel(t *testing.T) {
+	for _, args := range [][]string{
+		{"--effort", "high"},
+		{"--effort=medium"},
+		{"-m", "claude-opus-4-8", "--effort", "xhigh"},
+		{"--effort", "default"}, // "default" restores jcode's model default
+	} {
+		if got := jcodeEffectiveEffort(args); got == "" || got == "low" {
+			t.Errorf("jcodeEffectiveEffort(%v) = %q, want the pinned level", args, got)
+		}
+	}
+}
+
+func TestJcodeEffortEnv_NamesBothReasoningEffortProviderFamilies(t *testing.T) {
+	env := jcodeEffortEnv("low")
+	if len(env) != 2 {
+		t.Fatalf("jcodeEffortEnv(len) = %v, want exactly the anthropic and openai entries", env)
+	}
+	want := map[string]string{
+		"JCODE_ANTHROPIC_REASONING_EFFORT": "low",
+		"JCODE_OPENAI_REASONING_EFFORT":    "low",
+	}
+	got := map[string]string{}
+	for _, kv := range env {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			t.Fatalf("env entry %q has no =", kv)
+		}
+		got[k] = v
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("env[%s] = %q, want %q (full env: %v)", k, got[k], v, env)
+		}
+	}
+}
 
 func TestJcodeAgent_BuildArgs_Cold(t *testing.T) {
 	ja := &jcodeAgent{bin: "jcode"}
@@ -166,4 +242,199 @@ func TestParseJcodeEvents_CapturesError(t *testing.T) {
 	if !strings.Contains(res.errMessage, "boom failed to send request") {
 		t.Fatalf("errMessage = %q, want the error event message", res.errMessage)
 	}
+}
+
+func TestJcodeAgent_BuildArgs_StripsEffortPseudoFlag(t *testing.T) {
+	// jcode run has no --effort flag, so the pseudo-flag must never reach argv:
+	// it is translated to the JCODE_*_REASONING_EFFORT env vars instead (see
+	// TestJcodeAgent_RunOnce_ThreadsEffortEnv).
+	for _, extra := range [][]string{
+		{"-m", "claude-sonnet-5", "--effort", "high"},
+		{"--effort=high", "-m", "claude-sonnet-5"},
+		{"--effort", "high"},
+	} {
+		ja := &jcodeAgent{bin: "jcode", extraArgs: extra}
+		args := ja.buildArgs("do the thing", "")
+		joined := strings.Join(args, " ")
+		if !strings.HasPrefix(joined, "run ") {
+			t.Fatalf("args must start with the run subcommand: %v", args)
+		}
+		for _, arg := range args {
+			if strings.Contains(arg, "effort") {
+				t.Errorf("extraArgs %v: argv %v must not carry the effort pseudo-flag", extra, args)
+			}
+		}
+		if args[len(args)-2] != "--" || args[len(args)-1] != "do the thing" {
+			t.Fatalf("extraArgs %v: prompt must stay the final positional after --: %v", extra, args)
+		}
+	}
+}
+
+func TestJcodeAgent_BuildArgs_KeepsNonEffortExtraArgs(t *testing.T) {
+	ja := &jcodeAgent{bin: "jcode", extraArgs: []string{"-m", "claude-opus-4-8", "--effort", "high"}}
+	args := ja.buildArgs("p", "")
+	joined := strings.Join(args, " ")
+	if !strings.HasPrefix(joined, "run -m claude-opus-4-8 ") {
+		t.Fatalf("non-effort extra args must survive and follow the run subcommand: %v", args)
+	}
+}
+
+type jcodeEnvObservation struct {
+	AnthropicEffort string   `json:"anthropic_effort"`
+	OpenAIEffort    string   `json:"openai_effort"`
+	Marker          string   `json:"marker"`
+	Args            []string `json:"args"`
+}
+
+func TestJcodeAgent_RunOnce_ThreadsEffortEnv(t *testing.T) {
+	// The probe replays the test binary as the jcode CLI and records the
+	// environment it actually saw plus the argv it was launched with, so these
+	// cases cover the full invocation construction: managed flags, effort env
+	// translation, opts.Env passthrough, and the per-step arg profile.
+	tests := []struct {
+		name       string
+		extraArgs  []string
+		stepArgs   map[string][]string
+		wantEffort string
+	}{
+		{
+			name:       "default low matches the old claude override",
+			extraArgs:  []string{"-m", "claude-sonnet-5"},
+			wantEffort: "low",
+		},
+		{
+			name:       "pinned effort overrides the default",
+			extraArgs:  []string{"-m", "claude-sonnet-5", "--effort", "high"},
+			wantEffort: "high",
+		},
+		{
+			name:       "equals form",
+			extraArgs:  []string{"--effort=medium"},
+			wantEffort: "medium",
+		},
+		{
+			name:       "per-step profile pins effort",
+			extraArgs:  []string{"-m", "claude-sonnet-5", "--effort", "low"},
+			stepArgs:   map[string][]string{"jcode": {"-m", "claude-opus-4-8", "--effort", "xhigh"}},
+			wantEffort: "xhigh",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obsPath := filepath.Join(t.TempDir(), "observation.json")
+			opts := RunOpts{
+				Prompt: "probe the effort axis",
+				CWD:    t.TempDir(),
+				Env: []string{
+					"NM_JCODE_ENV_OBSERVATION=" + obsPath,
+					"NM_JCODE_PROBE_MARKER=present",
+				},
+				StepArgsOverride: tt.stepArgs,
+			}
+			a := newJcodeEnvProbeAgent(t, tt.extraArgs)
+			result, err := a.runOnce(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("runOnce: %v", err)
+			}
+			if result.Text != "ok" || result.SessionID != "probe-session" {
+				t.Fatalf("result = %+v, want the probe's done event", result)
+			}
+
+			data, err := os.ReadFile(obsPath)
+			if err != nil {
+				t.Fatalf("read probe observation: %v", err)
+			}
+			var got jcodeEnvObservation
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatalf("parse probe observation: %v", err)
+			}
+			if got.AnthropicEffort != tt.wantEffort {
+				t.Errorf("JCODE_ANTHROPIC_REASONING_EFFORT = %q, want %q", got.AnthropicEffort, tt.wantEffort)
+			}
+			if got.OpenAIEffort != tt.wantEffort {
+				t.Errorf("JCODE_OPENAI_REASONING_EFFORT = %q, want %q", got.OpenAIEffort, tt.wantEffort)
+			}
+			if got.Marker != "present" {
+				t.Errorf("opts.Env passthrough marker = %q, want present (jcode must thread invocation env)", got.Marker)
+			}
+			// Only the flag region (everything before the trailing `-- <prompt>`
+			// positional) may not carry the effort pseudo-flag; the prompt itself
+			// is free-form.
+			if len(got.Args) >= 2 {
+				for _, arg := range got.Args[:len(got.Args)-2] {
+					if arg == "--effort" || strings.HasPrefix(arg, "--effort=") {
+						t.Errorf("spawned argv %v must not carry the effort pseudo-flag", got.Args)
+					}
+				}
+			}
+			joined := strings.Join(got.Args, " ")
+			for _, want := range []string{"run", "--ndjson", "--quiet", "--no-update", "--no-selfdev"} {
+				if !strings.Contains(joined, want) {
+					t.Errorf("spawned argv %v missing managed flag %q", got.Args, want)
+				}
+			}
+			if got.Args[len(got.Args)-2] != "--" || got.Args[len(got.Args)-1] != "probe the effort axis" {
+				t.Errorf("spawned argv %v must end with -- <prompt>", got.Args)
+			}
+			if len(got.Args) > 1 && got.Args[0] != "run" {
+				t.Errorf("spawned argv %v must start with the run subcommand", got.Args)
+			}
+		})
+	}
+}
+
+// newJcodeEnvProbeAgent returns a jcodeAgent whose binary is a wrapper script
+// that replays the current test executable in helper mode, so runOnce's argv
+// and environment can be observed without a real jcode install.
+//
+// Windows cannot launch an extensionless #!/bin/sh script: exec.LookPath needs
+// a PATHEXT extension (the bare name fails with "executable file not found in
+// %PATH%"), and even a renamed .exe would not run a shell-script body. So on
+// Windows the wrapper is a .cmd batch, mirroring the sibling probe fakes in
+// codex_test.go, pi_test.go, and copilot_test.go, which all launch through the
+// same native-agent exec path. Both wrappers forward every argument the adapter
+// passed, after their own `-test.run` selector and a `--` separator, so the
+// helper sees the full jcode argv via argsAfterDoubleDash.
+func newJcodeEnvProbeAgent(t *testing.T, extraArgs []string) *jcodeAgent {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("current test executable: %v", err)
+	}
+	dir := t.TempDir()
+	var script, body string
+	if runtime.GOOS == "windows" {
+		// %* forwards the adapter's argv verbatim. The -test.run selector is
+		// double-quoted so cmd.exe treats the regex anchors ^ and $ literally
+		// rather than as its escape/redirection metacharacters.
+		script = filepath.Join(dir, "jcode-probe.cmd")
+		body = "@echo off\r\n\"" + exe + "\" \"-test.run=^TestJcodeRunOnceEnvProbe$\" -- %*\r\n"
+	} else {
+		script = filepath.Join(dir, "jcode-probe")
+		body = "#!/bin/sh\nexec " + strconv.Quote(exe) + " -test.run=^TestJcodeRunOnceEnvProbe$ -- \"$@\"\n"
+	}
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatalf("write probe script: %v", err)
+	}
+	return &jcodeAgent{bin: script, extraArgs: extraArgs}
+}
+
+// TestJcodeRunOnceEnvProbe is the helper mode of TestJcodeAgent_RunOnce_ThreadsEffortEnv:
+// it records the effort env vars, an invocation-env marker, and the adapter's
+// argv, then emits the one NDJSON done event runOnce needs to succeed.
+func TestJcodeRunOnceEnvProbe(t *testing.T) {
+	path := os.Getenv("NM_JCODE_ENV_OBSERVATION")
+	if path == "" {
+		return
+	}
+	obs := jcodeEnvObservation{
+		AnthropicEffort: os.Getenv("JCODE_ANTHROPIC_REASONING_EFFORT"),
+		OpenAIEffort:    os.Getenv("JCODE_OPENAI_REASONING_EFFORT"),
+		Marker:          os.Getenv("NM_JCODE_PROBE_MARKER"),
+		Args:            argsAfterDoubleDash(os.Args),
+	}
+	data, _ := json.Marshal(obs)
+	_ = os.WriteFile(path, data, 0o644)
+	fmt.Println(`{"session_id":"probe-session","model":"probe-model","provider":"Claude","text":"ok","type":"done"}`)
+	os.Exit(0)
 }
