@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -382,17 +383,36 @@ func TestJcodeAgent_RunOnce_ThreadsEffortEnv(t *testing.T) {
 	}
 }
 
-// newJcodeEnvProbeAgent returns a jcodeAgent whose binary is a shell script
+// newJcodeEnvProbeAgent returns a jcodeAgent whose binary is a wrapper script
 // that replays the current test executable in helper mode, so runOnce's argv
 // and environment can be observed without a real jcode install.
+//
+// Windows cannot launch an extensionless #!/bin/sh script: exec.LookPath needs
+// a PATHEXT extension (the bare name fails with "executable file not found in
+// %PATH%"), and even a renamed .exe would not run a shell-script body. So on
+// Windows the wrapper is a .cmd batch, mirroring the sibling probe fakes in
+// codex_test.go, pi_test.go, and copilot_test.go, which all launch through the
+// same native-agent exec path. Both wrappers forward every argument the adapter
+// passed, after their own `-test.run` selector and a `--` separator, so the
+// helper sees the full jcode argv via argsAfterDoubleDash.
 func newJcodeEnvProbeAgent(t *testing.T, extraArgs []string) *jcodeAgent {
 	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatalf("current test executable: %v", err)
 	}
-	script := filepath.Join(t.TempDir(), "jcode-probe")
-	body := "#!/bin/sh\nexec " + strconv.Quote(exe) + " -test.run=^TestJcodeRunOnceEnvProbe$ -- \"$@\"\n"
+	dir := t.TempDir()
+	var script, body string
+	if runtime.GOOS == "windows" {
+		// %* forwards the adapter's argv verbatim. The -test.run selector is
+		// double-quoted so cmd.exe treats the regex anchors ^ and $ literally
+		// rather than as its escape/redirection metacharacters.
+		script = filepath.Join(dir, "jcode-probe.cmd")
+		body = "@echo off\r\n\"" + exe + "\" \"-test.run=^TestJcodeRunOnceEnvProbe$\" -- %*\r\n"
+	} else {
+		script = filepath.Join(dir, "jcode-probe")
+		body = "#!/bin/sh\nexec " + strconv.Quote(exe) + " -test.run=^TestJcodeRunOnceEnvProbe$ -- \"$@\"\n"
+	}
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatalf("write probe script: %v", err)
 	}
