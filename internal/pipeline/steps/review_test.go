@@ -8,13 +8,120 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/agent"
 	"github.com/kunchenguid/no-mistakes/internal/config"
 	"github.com/kunchenguid/no-mistakes/internal/db"
+	"github.com/kunchenguid/no-mistakes/internal/paths"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
+
+func TestReviewStep_HangingAgentFailsRunAfterTimeout(t *testing.T) {
+	dir, baseSHA, headSHA := setupGitRepo(t)
+	ag := &mockAgent{
+		name: "hanging-review-agent",
+		runFn: func(ctx context.Context, _ agent.RunOpts) (*agent.Result, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx.Config.ReviewAgentTimeout = 20 * time.Millisecond
+
+	exec := pipeline.NewExecutor(sctx.DB, paths.WithRoot(t.TempDir()), sctx.Config, ag, []pipeline.Step{&ReviewStep{}}, nil)
+	if err := exec.Execute(context.Background(), sctx.Run, sctx.Repo, dir); err == nil {
+		t.Fatal("expected hanging review agent to fail the run")
+	}
+
+	run, err := sctx.DB.GetRun(sctx.Run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if run.Status != types.RunFailed {
+		t.Fatalf("run status = %s, want %s", run.Status, types.RunFailed)
+	}
+	if run.Error == nil || !strings.Contains(*run.Error, "review agent silent for 20ms") {
+		var got string
+		if run.Error != nil {
+			got = *run.Error
+		}
+		t.Fatalf("run error = %q, want timeout diagnostic", got)
+	}
+}
+
+// TestReviewStep_EachRoundGetsItsOwnAgentBudget pins the documented
+// review_agent_timeout contract: the deadline bounds ONE review round -
+// its optional fix turn plus the rereview turn share a single budget - and
+// every later auto-fix round is derived fresh from the step's parent context.
+// Without the fresh derivation, a step context reused across rounds would
+// carry round 1's already-spent deadline into round 2 and fail a healthy agent.
+func TestReviewStep_EachRoundGetsItsOwnAgentBudget(t *testing.T) {
+	dir, baseSHA, headSHA := setupGitRepo(t)
+	gitCmd(t, dir, "checkout", "--detach", headSHA)
+
+	const timeout = time.Hour
+	type call struct {
+		fixTurn  bool
+		deadline time.Time
+	}
+	var calls []call
+
+	findings := `{"findings":[{"file":"a.txt","line":1,"severity":"warning","action":"auto-fix","description":"tidy"}]}`
+	ag := &mockAgent{
+		name: "budget-probe",
+		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+			dl, ok := ctx.Deadline()
+			if !ok {
+				t.Errorf("agent call %d ran with no deadline", len(calls)+1)
+			}
+			isFix := strings.Contains(opts.Prompt, "Investigate previous review findings")
+			calls = append(calls, call{fixTurn: isFix, deadline: dl})
+			if isFix {
+				return &agent.Result{Output: json.RawMessage("fixed it")}, nil
+			}
+			// Round 1 raises an auto-fixable finding; later rounds are clean.
+			if len(calls) == 1 {
+				return &agent.Result{Output: json.RawMessage(findings)}, nil
+			}
+			return &agent.Result{Output: json.RawMessage(`{"findings":[]}`)}, nil
+		},
+	}
+
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx.Config.ReviewAgentTimeout = timeout
+	sctx.Config.AutoFix.Review = 1
+
+	exec := pipeline.NewExecutor(sctx.DB, paths.WithRoot(t.TempDir()), sctx.Config, ag, []pipeline.Step{&ReviewStep{}}, nil)
+	if err := exec.Execute(context.Background(), sctx.Run, sctx.Repo, dir); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+
+	// round 1: review. round 2: fix + rereview.
+	if len(calls) != 3 {
+		t.Fatalf("agent calls = %d, want 3 (review, fix, rereview); got %+v", len(calls), calls)
+	}
+	if calls[0].fixTurn || !calls[1].fixTurn || calls[2].fixTurn {
+		t.Fatalf("turn order = %+v, want review, fix, rereview", calls)
+	}
+
+	// The fix turn and the rereview turn of round 2 share one round budget.
+	if !calls[1].deadline.Equal(calls[2].deadline) {
+		t.Errorf("round 2 fix and rereview deadlines differ (%v vs %v); one round must share one budget",
+			calls[1].deadline, calls[2].deadline)
+	}
+	// Round 2 is derived fresh, so its budget starts after round 1's.
+	if !calls[1].deadline.After(calls[0].deadline) {
+		t.Errorf("round 2 deadline %v is not later than round 1 deadline %v; the round budget leaked across rounds",
+			calls[1].deadline, calls[0].deadline)
+	}
+	// Each round's budget is the configured timeout, not a shrinking remainder.
+	if remaining := time.Until(calls[2].deadline); remaining <= timeout/2 {
+		t.Errorf("round 2 budget remaining %v is far below the configured %v; the round did not get a full budget",
+			remaining, timeout)
+	}
+}
 
 func TestReviewStep_FixMode(t *testing.T) {
 	t.Parallel()
@@ -316,6 +423,57 @@ func TestReviewStep_DurableFixAdequacyContract(t *testing.T) {
 	}
 }
 
+// Counterexample construction is a general review principle for any new or
+// changed logic, not a bug-fix-only reconstruction. Silently wrong values,
+// labels, and sets are named as risks. The principle stays short and general:
+// it must not become a checklist of incident-specific probes.
+func TestReviewStep_CounterexampleConstructionIsUnconditional(t *testing.T) {
+	t.Parallel()
+	dir, baseSHA, headSHA := setupGitRepo(t)
+
+	findingsJSON, _ := json.Marshal(Findings{Summary: "clean"})
+	ag := &mockAgent{
+		name: "test",
+		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+			return &agent.Result{Output: findingsJSON}, nil
+		},
+	}
+
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	if _, err := (&ReviewStep{}).Execute(sctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(ag.calls) != 1 {
+		t.Fatalf("expected 1 review call, got %d", len(ag.calls))
+	}
+	prompt := ag.calls[0].Prompt
+
+	for _, want := range []string{
+		"For any new or changed logic, construct at least one concrete input or state and trace it",
+		"wrong result without erroring",
+		"wrong value, label, or set without failing",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("review prompt missing general correctness principle %q:\n%s", want, prompt)
+		}
+	}
+
+	// Durable-fix reconstruction remains a paired, still-gated discipline.
+	if !strings.Contains(prompt, "For a claimed durable fix, reconstruct the concrete failing sequence") {
+		t.Errorf("review prompt dropped the durable-fix reconstruction pairing:\n%s", prompt)
+	}
+
+	for _, overfit := range []string{
+		"each read path and each write/refresh path",
+		"configured bound is changed after state already exists",
+		"greedy or order-dependent loop",
+	} {
+		if strings.Contains(prompt, overfit) {
+			t.Errorf("review prompt overfit an incident-specific probe %q:\n%s", overfit, prompt)
+		}
+	}
+}
+
 // The rereview that certifies a fix round examines code the pipeline itself
 // authored, moments earlier, to the previous review turn's prescription. The
 // prompt must reframe that code as unreviewed new work under the same
@@ -400,6 +558,114 @@ func TestReviewStep_RereviewTreatsFixRoundsAsPipelineAuthoredCode(t *testing.T) 
 			t.Errorf("initial review prompt must not carry the fix-round provenance contract:\n%s", ag.calls[0].Prompt)
 		}
 	})
+}
+
+func TestFixRoundProvenanceClause_EmitsForUncertifiedRangeWhenNotFixing(t *testing.T) {
+	t.Parallel()
+	dir, baseSHA, headSHA := setupGitRepo(t)
+
+	findingsJSON, _ := json.Marshal(Findings{Summary: "clean"})
+	ag := &mockAgent{
+		name: "test",
+		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+			return &agent.Result{Output: findingsJSON}, nil
+		},
+	}
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx.UncertifiedFromSHA = "from-sha"
+	sctx.UncertifiedToSHA = "to-sha"
+	sctx.UncertifiedSourceRunID = "prior-run"
+	priorFindings := `{"findings":[{"id":"review-1","severity":"error","file":"main.go","line":4,"description":"reachable bug","action":"auto-fix"}]}`
+	sctx.UncertifiedPriorRounds = []*db.StepRound{{
+		Round:        1,
+		Trigger:      "initial",
+		FindingsJSON: &priorFindings,
+	}}
+
+	if _, err := (&ReviewStep{}).Execute(sctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(ag.calls) != 1 {
+		t.Fatalf("expected 1 review call, got %d", len(ag.calls))
+	}
+	prompt := ag.calls[0].Prompt
+	for _, want := range []string{
+		"Fix-round provenance:",
+		"Commits after from-sha through to-sha on this branch were authored by a previous run's fixer and were never certified",
+		"same adversarial standard",
+		"Prior findings and fix summaries are claims, not evidence",
+		"Previous run (uncertified fixer commits)",
+		"reachable bug",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("initial review missing uncertified provenance %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "This is a re-review after this run's automated fix round(s)") {
+		t.Errorf("uncertified initial review must not use the current-run fixer framing:\n%s", prompt)
+	}
+}
+
+func TestUncertifiedRange_PersistsThenFeedsNextInitialReview(t *testing.T) {
+	t.Parallel()
+	dir, baseSHA, headSHA := setupGitRepo(t)
+	gitCmd(t, dir, "checkout", "--detach", headSHA)
+
+	fixAgent := &mockAgent{name: "test"}
+	fixCtx := newTestContextWithDBRecords(t, fixAgent, dir, baseSHA, headSHA, config.Commands{})
+	fixCtx.ReviewStartingHeadSHA = headSHA
+	if err := os.WriteFile(filepath.Join(dir, "review-fix.txt"), []byte("fixed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := commitAgentFixes(fixCtx, types.StepReview, "apply fix", "fallback"); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := fixCtx.DB.GetUncertifiedPipelineRange(fixCtx.Repo.ID, fixCtx.Run.Branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted == nil || persisted.FromSHA != headSHA || persisted.ToSHA != fixCtx.Run.HeadSHA {
+		t.Fatalf("fixer commit did not persist range: %#v", persisted)
+	}
+
+	findingsJSON, _ := json.Marshal(Findings{Summary: "clean"})
+	reviewAgent := &mockAgent{
+		name: "test",
+		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+			return &agent.Result{Output: findingsJSON}, nil
+		},
+	}
+	nextRun, err := fixCtx.DB.InsertRun(fixCtx.Repo.ID, fixCtx.Run.Branch, fixCtx.Run.HeadSHA, baseSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sctx := newTestContext(t, reviewAgent, dir, baseSHA, fixCtx.Run.HeadSHA, config.Commands{})
+	sctx.DB = fixCtx.DB
+	sctx.Repo = fixCtx.Repo
+	sctx.Run = nextRun
+	sctx.Fixing = false
+	pipeline.BindUncertifiedPipelineRange(sctx)
+	if sctx.UncertifiedFromSHA != persisted.FromSHA || sctx.UncertifiedToSHA != persisted.ToSHA {
+		t.Fatalf("next initial review bound from=%q to=%q, want from=%q to=%q", sctx.UncertifiedFromSHA, sctx.UncertifiedToSHA, persisted.FromSHA, persisted.ToSHA)
+	}
+
+	if _, err := (&ReviewStep{}).Execute(sctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(reviewAgent.calls) != 1 {
+		t.Fatalf("expected 1 review call, got %d", len(reviewAgent.calls))
+	}
+	prompt := reviewAgent.calls[0].Prompt
+	want := fmt.Sprintf("Commits after %s through %s on this branch were authored by a previous run's fixer and were never certified", persisted.FromSHA, persisted.ToSHA)
+	if !strings.Contains(prompt, want) {
+		t.Fatalf("next initial review missing persisted provenance %q:\n%s", want, prompt)
+	}
+	if sctx.Fixing {
+		t.Fatal("next initial review ran in fix mode")
+	}
+	if strings.Contains(prompt, "This is a re-review after this run's automated fix round(s)") {
+		t.Fatalf("next initial review used current-run fixer framing:\n%s", prompt)
+	}
 }
 
 func TestReviewStep_FixMode_RequiresPreviousFindings(t *testing.T) {
@@ -535,6 +801,11 @@ func TestReviewStep_ConformanceObligationTracksIntentProvenance(t *testing.T) {
 				if !strings.Contains(prompt, `you MUST emit an "ask-user" finding`) {
 					t.Errorf("conformance clause missing the ask-user obligation:\n%s", prompt)
 				}
+				if !strings.Contains(prompt, "Conformance does not replace correctness review") {
+					t.Errorf("conformance clause missing the correctness-is-not-conformance note:\n%s", prompt)
+				}
+			} else if strings.Contains(prompt, "Conformance does not replace correctness review") {
+				t.Errorf("inferred intent must not carry the conformance-vs-correctness note:\n%s", prompt)
 			}
 		})
 	}
@@ -626,7 +897,7 @@ func reviewPromptFor(t *testing.T, rules []config.PathInstruction) string {
 	if len(ag.calls) != 1 {
 		t.Fatalf("expected 1 review call, got %d", len(ag.calls))
 	}
-	return ag.calls[0].Prompt
+	return strings.ReplaceAll(ag.calls[0].Prompt, dir, "<WORKDIR>")
 }
 
 // A repository with no review.path_instructions must get the review prompt it

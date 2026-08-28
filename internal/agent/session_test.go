@@ -7,9 +7,10 @@ import (
 )
 
 // TestSupportsSessionResume_PerAdapter pins which adapters advertise durable
-// session resume. Claude, codex, and jcode have native resume (claude --resume,
-// codex exec resume, jcode run --resume); every other adapter must run cold so
-// the pipeline's fallback path records the cold invocation instead of assuming
+// session resume. Claude, Codex, Grok, Pi, Antigravity, and jcode have native
+// resume (Claude/Grok --resume, Codex exec resume, Pi --session, Antigravity
+// --conversation, jcode run --resume); every other adapter must run cold so the
+// pipeline's fallback path records the cold invocation instead of assuming
 // reuse.
 func TestSupportsSessionResume_PerAdapter(t *testing.T) {
 	cases := []struct {
@@ -19,9 +20,11 @@ func TestSupportsSessionResume_PerAdapter(t *testing.T) {
 	}{
 		{"claude", &claudeAgent{bin: "claude"}, true},
 		{"codex", &codexAgent{bin: "codex"}, true},
+		{"grok", &grokAgent{bin: "grok"}, true},
+		{"antigravity", &antigravityAgent{bin: "antigravity"}, true},
 		{"rovodev", &rovodevAgent{bin: "acli"}, false},
 		{"opencode", &opencodeAgent{bin: "opencode"}, false},
-		{"pi", &piAgent{bin: "pi"}, false},
+		{"pi", &piAgent{bin: "pi"}, true},
 		{"copilot", &copilotAgent{bin: "copilot"}, false},
 		{"jcode", &jcodeAgent{bin: "jcode"}, true},
 		{"acpx", &acpxAgent{bin: "acpx", target: "gemini"}, false},
@@ -103,7 +106,7 @@ func TestParseClaudeEvents_SessionIDFallsBackToLastSeen(t *testing.T) {
 
 func TestCodexAgent_BuildArgs_Resume(t *testing.T) {
 	ca := &codexAgent{bin: "codex"}
-	args := ca.buildArgs("re-review the branch", "/tmp/schema.json", "thread-99")
+	args := ca.buildArgs("/tmp/schema.json", "thread-99")
 
 	joined := strings.Join(args, " ")
 	if !strings.HasPrefix(joined, "exec resume thread-99 ") {
@@ -118,6 +121,9 @@ func TestCodexAgent_BuildArgs_Resume(t *testing.T) {
 	if !strings.Contains(joined, "--dangerously-bypass-approvals-and-sandbox") {
 		t.Fatalf("resume args must keep the sandbox bypass: %v", args)
 	}
+	if !strings.Contains(joined, "thread-99 -") {
+		t.Fatalf("resume prompt must use stdin marker after the session id: %v", args)
+	}
 	// codex exec resume (0.144) does not accept --color; passing it fails the
 	// whole invocation.
 	if strings.Contains(joined, "--color") {
@@ -127,10 +133,10 @@ func TestCodexAgent_BuildArgs_Resume(t *testing.T) {
 
 func TestCodexAgent_BuildArgs_ResumeKeepsExtraArgs(t *testing.T) {
 	ca := &codexAgent{bin: "codex", extraArgs: []string{"-m", "gpt-5.2-codex"}}
-	args := ca.buildArgs("prompt", "", "thread-1")
+	args := ca.buildArgs("", "thread-1")
 
 	joined := strings.Join(args, " ")
-	if !strings.HasPrefix(joined, "exec resume -m gpt-5.2-codex thread-1 prompt") {
+	if !strings.HasPrefix(joined, "exec resume -m gpt-5.2-codex thread-1 -") {
 		t.Fatalf("resume args must interleave user extraArgs before the session id: %v", args)
 	}
 }

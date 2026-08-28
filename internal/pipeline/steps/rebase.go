@@ -28,10 +28,7 @@ const forkBranchRefPrefix = "refs/remotes/no-mistakes-push/"
 func (s *RebaseStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, error) {
 	ctx := sctx.Ctx
 	branch := strings.TrimPrefix(sctx.Run.Branch, "refs/heads/")
-	defaultBranch := strings.TrimSpace(sctx.Repo.DefaultBranch)
-	if defaultBranch == "" {
-		defaultBranch = "main"
-	}
+	defaultBranch := effectivePRBaseBranch(sctx)
 	// Capture the branch head as it stood before any rebase in this run so a
 	// post-rebase content-parity check can prove the rebase preserved every hunk
 	// the branch proposed. Resolving a conflict by taking only the upstream side
@@ -187,6 +184,20 @@ func forcePushRebaseTargets(branch, defaultBranch string) []string {
 		return nil
 	}
 	return []string{"origin/" + defaultBranch}
+}
+
+// effectivePRBaseBranch resolves the branch used as the integration base for
+// rebases. The repository default remains the fallback for configurations that
+// do not select a separate PR target branch.
+func effectivePRBaseBranch(sctx *pipeline.StepContext) string {
+	defaultBranch := strings.TrimSpace(sctx.Repo.DefaultBranch)
+	if sctx.Config != nil && strings.TrimSpace(sctx.Config.PR.BaseBranch) != "" {
+		defaultBranch = strings.TrimSpace(sctx.Config.PR.BaseBranch)
+	}
+	if defaultBranch == "" {
+		defaultBranch = "main"
+	}
+	return defaultBranch
 }
 
 // detectBundledLocalDefaultCommits returns a blocking finding when the gated
@@ -494,9 +505,10 @@ Instructions:
 		prompt += "\n\nPrevious findings:\n" + sctx.PreviousFindings
 	}
 	prompt += userIntentPromptSection(sctx)
+	prompt += executionContextPromptSection(sctx.WorkDir)
 	prompt = testguidance.LateRepairPrompt(string(types.StepRebase), prompt)
 
-	_, err = sctx.Agent.Run(ctx, agent.RunOpts{
+	_, err = sctx.RunAgentContext(ctx, agent.RunOpts{
 		Prompt:     prompt,
 		CWD:        sctx.WorkDir,
 		JSONSchema: commitSummarySchema,
@@ -678,6 +690,8 @@ func updateHeadSHA(ctx context.Context, sctx *pipeline.StepContext) (*pipeline.S
 		return nil, fmt.Errorf("resolve head after rebase: %w", err)
 	}
 	if headSHA != "" && headSHA != sctx.Run.HeadSHA {
+		oldHead := sctx.Run.HeadSHA
+		pipeline.RemapUncertifiedPipelineRangeAfterRebase(sctx, oldHead, headSHA)
 		sctx.Run.HeadSHA = headSHA
 		if err := sctx.DB.UpdateRunHeadSHA(sctx.Run.ID, headSHA); err != nil {
 			return nil, err
@@ -687,10 +701,7 @@ func updateHeadSHA(ctx context.Context, sctx *pipeline.StepContext) (*pipeline.S
 
 	// Check if the branch has any diff against the default branch.
 	// If the diff is empty (e.g. branch was already merged), skip remaining steps.
-	defaultBranch := strings.TrimSpace(sctx.Repo.DefaultBranch)
-	if defaultBranch == "" {
-		defaultBranch = "main"
-	}
+	defaultBranch := effectivePRBaseBranch(sctx)
 	baseSHA := resolveBranchBaseSHA(ctx, sctx.WorkDir, sctx.Run.BaseSHA, defaultBranch)
 	diff, err := git.Diff(ctx, sctx.WorkDir, baseSHA, "HEAD")
 	if err == nil && strings.TrimSpace(diff) == "" {

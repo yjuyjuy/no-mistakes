@@ -10,7 +10,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
-func writeGlobalConfig(t *testing.T, data string) string {
+func writeGlobalConfigFile(t *testing.T, data string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -24,7 +24,7 @@ func TestLoadGlobal_AgentArgsOverridePerStep_JcodeEffortIsAccepted(t *testing.T)
 	// The jcode adapter translates --effort into the JCODE_*_REASONING_EFFORT
 	// env vars, so both the global override and per-step profiles must accept it
 	// as an ordinary operator flag, in either spelling.
-	path := writeGlobalConfig(t, `agent_args_override:
+	path := writeGlobalConfigFile(t, `agent_args_override:
   jcode:
     - -m
     - claude-sonnet-5
@@ -51,7 +51,7 @@ agent_args_override_per_step:
 }
 
 func TestLoadGlobal_AgentArgsOverridePerStep(t *testing.T) {
-	path := writeGlobalConfig(t, `agent_args_override:
+	path := writeGlobalConfigFile(t, `agent_args_override:
   codex:
     - -m
     - gpt-5.4
@@ -94,7 +94,7 @@ func TestLoadGlobal_AgentArgsOverridePerStep_Jcode(t *testing.T) {
 	// jcode rebuilds its argv per invocation, so a per-step model pin must be
 	// accepted and returned for that step. This is the split the ACP bridge
 	// cannot express, which is why jcode needs a native adapter.
-	path := writeGlobalConfig(t, `agent: jcode
+	path := writeGlobalConfigFile(t, `agent: jcode
 agent_args_override:
   jcode:
     - -m
@@ -192,7 +192,7 @@ func TestLoadGlobal_AgentArgsOverridePerStep_Rejects(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := LoadGlobal(writeGlobalConfig(t, tt.data))
+			_, err := LoadGlobal(writeGlobalConfigFile(t, tt.data))
 			if err == nil {
 				t.Fatalf("expected error for %s", tt.name)
 			}

@@ -41,7 +41,7 @@ func TestCodexBuildArgs_UsesPerStepProfile(t *testing.T) {
 	stepped := a.withStepArgs(RunOpts{StepArgsOverride: map[string][]string{
 		"codex": {"-m", "gpt-5.4", "-c", `model_reasoning_effort="high"`},
 	}})
-	args := stepped.buildArgs("review the diff", "", "")
+	args := stepped.buildArgs("", "")
 	if !argsContainPair(args, "-m", "gpt-5.4") {
 		t.Errorf("buildArgs = %v, want the per-step model", args)
 	}
@@ -53,7 +53,7 @@ func TestCodexBuildArgs_UsesPerStepProfile(t *testing.T) {
 	}
 	// The receiver is untouched, so the next step without a profile gets the
 	// globally configured args back.
-	if !argsContainPair(a.buildArgs("p", "", ""), "-m", "gpt-5.4-mini") {
+	if !argsContainPair(a.buildArgs("", ""), "-m", "gpt-5.4-mini") {
 		t.Error("withStepArgs must not mutate the shared adapter")
 	}
 }
@@ -61,7 +61,7 @@ func TestCodexBuildArgs_UsesPerStepProfile(t *testing.T) {
 func TestCodexBuildArgs_PerStepProfileKeepsManagedFlags(t *testing.T) {
 	a := &codexAgent{bin: "codex", disableProjectSettings: true}
 	args := a.withStepArgs(RunOpts{StepArgsOverride: map[string][]string{"codex": {"-m", "gpt-5.4"}}}).
-		buildArgs("review", "", "")
+		buildArgs("", "")
 	if !argsContainPair(args, "-c", "project_doc_max_bytes=0") {
 		t.Errorf("buildArgs = %v, want project-settings suppression preserved under a per-step profile", args)
 	}
@@ -97,7 +97,7 @@ func TestClaudeWithStepArgs_IgnoresAnotherAgentsProfile(t *testing.T) {
 func TestCopilotBuildArgs_UsesPerStepProfile(t *testing.T) {
 	a := &copilotAgent{bin: "copilot", extraArgs: []string{"--model", "cheap"}}
 	args := a.withStepArgs(RunOpts{StepArgsOverride: map[string][]string{"copilot": {"--model", "strong", "--effort", "high"}}}).
-		buildArgs("p")
+		buildArgs()
 	if !argsContainPair(args, "--model", "strong") || !argsContainPair(args, "--effort", "high") {
 		t.Errorf("buildArgs = %v, want the per-step profile", args)
 	}
@@ -105,7 +105,7 @@ func TestCopilotBuildArgs_UsesPerStepProfile(t *testing.T) {
 
 func TestPiBuildArgs_UsesPerStepProfile(t *testing.T) {
 	a := &piAgent{bin: "pi", extraArgs: []string{"--model", "cheap"}}
-	args := a.withStepArgs(RunOpts{StepArgsOverride: map[string][]string{"pi": {"--model", "strong"}}}).buildArgs()
+	args := a.withStepArgs(RunOpts{StepArgsOverride: map[string][]string{"pi": {"--model", "strong"}}}).buildArgs(nil)
 	if !argsContainPair(args, "--model", "strong") {
 		t.Errorf("buildArgs = %v, want the per-step profile", args)
 	}
