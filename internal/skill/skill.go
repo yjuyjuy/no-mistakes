@@ -255,8 +255,8 @@ Never treat "no CI checks reported" alone as green.
 Because that monitor stays live, a PR that falls behind the default branch or
 hits a merge conflict after checks pass - commonly because another PR merged
 first - needs **no command from you**: never hand-rebase. When the CI monitor
-sees an actual conflict it **rebases onto the base, resolves it, and re-pushes
-the branch itself**; a PR that is merely behind but still clean needs nothing
+sees an actual conflict it **rebases onto the base, resolves it, restarts
+validation at Review, and re-pushes the branch through Push**; a PR that is merely behind but still clean needs nothing
 either, since the platform merges it. The one exception is when that monitor is
 no longer running - the PR was closed, the run was aborted or superseded, it
 idle-timed-out, or its auto-fix attempts were exhausted - in which case recover
@@ -317,7 +317,8 @@ no-mistakes axi abort --run <id>   # cancel a specific run by id (works outside 
 ## Reading the output
 
 - Output is TOON: ` + "`key: value`" + ` pairs, ` + "`name[N]{cols}:`" + ` tables, and ` + "`help[N]:`" + ` hints.
-- A non-terminal run object may include ` + "`awaiting_agent: parked <duration>`" + ` immediately after ` + "`status`" + `; that means the run is parked at a gate awaiting your ` + "`axi respond`" + `.
+- ` + "`axi status`" + ` is scoped to your current branch when ` + "`--run`" + ` is omitted: with a known current branch, an implicitly resolved ` + "`run:`" + ` is this branch's. A run under ` + "`other_branch_run:`" + ` is one you named with ` + "`--run <id>`" + ` that belongs to another branch - never read its status or outcome as your own work. An explicit ` + "`--run <id>`" + ` rendered under ` + "`run:`" + ` while the current branch is unknown (detached ` + "`HEAD`" + ` or a branch-lookup failure) encodes no branch relationship. In a successful status response, no run object at all means this branch has no run yet, whatever the recent-runs table lists; an ` + "`error:`" + ` response proves nothing about run ownership, so act on the error instead of concluding the branch is idle.
+- A non-terminal run object may include ` + "`awaiting_agent: parked <duration>`" + ` immediately after ` + "`status`" + `; that means the run is parked at a gate. Only an implicitly resolved current-branch gate offers ` + "`axi respond`" + `; an explicit ` + "`--run <id>`" + ` status is inspection-only even when its branch matches, because the branch may have a newer active run. Follow the response's ` + "`help`" + `.
 - A run object with a ` + "`running`" + ` or ` + "`fixing`" + ` step may include an ` + "`active_steps`" + ` table. Use it to see the active duration, latest activity, native agent PID, and current execution or fix round.
 - The ` + "`help`" + ` list at the bottom of most responses tells you the next commands to run.
 - Errors are printed as ` + "`error: ...`" + ` on stdout with a ` + "`help`" + ` list; act on the suggestion.

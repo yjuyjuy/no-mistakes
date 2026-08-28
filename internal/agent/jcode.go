@@ -33,6 +33,7 @@ import (
 type jcodeAgent struct {
 	bin       string
 	extraArgs []string
+	subprocessContext
 }
 
 // jcodeEffortFlag is the accepted effort pseudo-flag inside
@@ -153,7 +154,7 @@ func (a *jcodeAgent) runOnce(ctx context.Context, opts RunOpts) (*Result, error)
 	// entry, mirroring how the old claude override placed `--effort low` ahead
 	// of everything claude itself decided.
 	env := append(append([]string(nil), opts.Env...), jcodeEffortEnv(jcodeEffectiveEffort(a.extraArgs))...)
-	cmd.Env = gitSafeEnv(opts.CWD, env)
+	cmd.Env = a.gitSafeEnv(opts.CWD, env)
 	shellenv.ConfigureShellCommand(cmd)
 
 	var stderrBuf []byte
