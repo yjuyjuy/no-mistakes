@@ -145,12 +145,12 @@ Suppress project-level agent settings and instructions for every gate-agent star
 
 This opt-in is intended for agent-orchestration repositories whose `AGENTS.md`, `CLAUDE.md`, or harness-specific project settings would give a validation agent an operator identity and authority that it must not adopt.
 When enabled, no-mistakes suppresses the target checkout's project settings for every agent-driven gate step while preserving user-level agent configuration.
-Codex, Claude, and Pi are the currently verified agents: Codex receives `project_doc_max_bytes=0` and `--ignore-rules`, Claude loads only its user setting source, and Pi runs with `--no-context-files` (preserving a pinned `--no-context-files` or `-nc` spelling).
+Codex, Claude, Pi, and Jcode are the currently verified agents: Codex receives `project_doc_max_bytes=0` and `--ignore-rules`, Claude loads only its user setting source, Pi runs with `--no-context-files` (preserving a pinned `--no-context-files` or `-nc` spelling), and Jcode launches with `JCODE_NO_AGENTS_MD=1`, which suppresses both the checkout's `./AGENTS.md` and the global `~/AGENTS.md`.
 Grok 1.0.5 still discovers native project instructions and `.grok` project surfaces, so it is not a verified agent for this boundary. A configuration that resolves Grok while this option is enabled therefore fails closed before launch.
 The setting applies to both new and resumed sessions.
 
 The gate fails before launching an agent if any resolved agent or fallback lacks a verified suppression mechanism.
-It also fails if `agent_args_override` defeats suppression, such as a nonzero Codex `project_doc_max_bytes` or Claude setting sources that include `project` or `local`.
+It also fails if `agent_args_override` defeats suppression, such as a nonzero Codex `project_doc_max_bytes` or Claude setting sources that include `project` or `local`; Jcode's knob is environment-only, so no override defeats it.
 When this option is `false`, missing, or `null`, all agents retain their existing project-setting behavior.
 
 This field is honored **only from the trusted default-branch copy** of `.no-mistakes.yaml`, regardless of `allow_repo_commands`.

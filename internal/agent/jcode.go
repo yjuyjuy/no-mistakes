@@ -33,8 +33,18 @@ import (
 type jcodeAgent struct {
 	bin       string
 	extraArgs []string
+	// disableProjectSettings is the resolved, trusted-only opt-out. When true,
+	// runOnce suppresses AGENTS.md loading via JCODE_NO_AGENTS_MD.
+	disableProjectSettings bool
 	subprocessContext
 }
+
+// jcodeNoAgentsMDEnv is the environment entry that suppresses AGENTS.md
+// loading in jcode: JCODE_NO_AGENTS_MD skips both the project ./AGENTS.md and
+// the global ~/AGENTS.md before any path check (jcode PR #37,
+// crates/jcode-base/src/prompt.rs). jcode run has no CLI flag for this knob,
+// so the environment is the only surface.
+const jcodeNoAgentsMDEnv = "JCODE_NO_AGENTS_MD=1"
 
 // jcodeEffortFlag is the accepted effort pseudo-flag inside
 // agent_args_override[_per_step].jcode.
@@ -117,6 +127,21 @@ func (a *jcodeAgent) SupportsSessionResume() bool { return true }
 
 func (a *jcodeAgent) ReportsAgentAttempts() bool { return true }
 
+// NeutralizesGateInstructions reports whether jcode is currently launched with
+// the target repo's project agent-instruction files suppressed. It is
+// meaningful only under the opt-out (disableProjectSettings): the gate only
+// consults it when the repo opted out. runOnce appends JCODE_NO_AGENTS_MD=1 to
+// the launch env whenever the opt-out is on, so jcode loads neither the
+// checkout's ./AGENTS.md nor the global ~/AGENTS.md (jcode PR #37,
+// crates/jcode-base/src/prompt.rs). jcode run has no CLI flag that re-enables
+// AGENTS.md loading - the env knob is the only surface - so an operator
+// agent_args_override cannot defeat it, and the entry is appended after every
+// invocation env entry, so not even JCODE_NO_AGENTS_MD=0 in the environment
+// can. Return true only while the opt-out is on, exactly like claude.
+func (a *jcodeAgent) NeutralizesGateInstructions() bool {
+	return a.disableProjectSettings
+}
+
 func (a *jcodeAgent) Run(ctx context.Context, opts RunOpts) (*Result, error) {
 	return runWithRetry(ctx, "jcode", opts, claudeMaxRetries, classifyTransient, nil, func() (*Result, error) {
 		return a.runOnce(ctx, opts)
@@ -154,6 +179,13 @@ func (a *jcodeAgent) runOnce(ctx context.Context, opts RunOpts) (*Result, error)
 	// entry, mirroring how the old claude override placed `--effort low` ahead
 	// of everything claude itself decided.
 	env := append(append([]string(nil), opts.Env...), jcodeEffortEnv(jcodeEffectiveEffort(a.extraArgs))...)
+	// Under the trusted disable_project_settings opt-out, suppress AGENTS.md
+	// loading the way claude drops its project setting sources: the gate agent
+	// must never load the target repo's ./AGENTS.md. Appended after every
+	// invocation env entry so its value always wins.
+	if a.disableProjectSettings {
+		env = append(env, jcodeNoAgentsMDEnv)
+	}
 	cmd.Env = a.gitSafeEnv(opts.CWD, env)
 	shellenv.ConfigureShellCommand(cmd)
 

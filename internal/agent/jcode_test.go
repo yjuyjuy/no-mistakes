@@ -282,6 +282,7 @@ func TestJcodeAgent_BuildArgs_KeepsNonEffortExtraArgs(t *testing.T) {
 type jcodeEnvObservation struct {
 	AnthropicEffort string   `json:"anthropic_effort"`
 	OpenAIEffort    string   `json:"openai_effort"`
+	NoAgentsMD      string   `json:"no_agents_md"`
 	Marker          string   `json:"marker"`
 	Args            []string `json:"args"`
 }
@@ -383,6 +384,79 @@ func TestJcodeAgent_RunOnce_ThreadsEffortEnv(t *testing.T) {
 	}
 }
 
+func TestJcodeAgent_RunOnce_ThreadsNoAgentsMDEnv(t *testing.T) {
+	// Under the trusted disable_project_settings opt-out, the launch env must
+	// carry JCODE_NO_AGENTS_MD=1 so jcode loads neither the checkout's
+	// ./AGENTS.md nor the global ~/AGENTS.md. The entry is appended after every
+	// invocation env entry, so even JCODE_NO_AGENTS_MD=0 in the environment (an
+	// override an operator or harvested agent might inject) cannot defeat it.
+	// Without the opt-out jcode keeps its default AGENTS.md loading (backward
+	// compat), exactly like the claude/codex/pi adapters.
+	tests := []struct {
+		name         string
+		optOut       bool
+		invocationMD string // JCODE_NO_AGENTS_MD value in opts.Env ("" = absent)
+		want         string
+	}{
+		{"opt-out on", true, "", "1"},
+		{"opt-out on beats invocation env defeat", true, "0", "1"},
+		{"no opt-out leaves jcode default loading", false, "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			obsPath := filepath.Join(t.TempDir(), "observation.json")
+			env := []string{
+				"NM_JCODE_ENV_OBSERVATION=" + obsPath,
+				"NM_JCODE_PROBE_MARKER=present",
+			}
+			if tt.invocationMD != "" {
+				env = append(env, "JCODE_NO_AGENTS_MD="+tt.invocationMD)
+			}
+			opts := RunOpts{Prompt: "probe the gate env", CWD: t.TempDir(), Env: env}
+			a := newJcodeEnvProbeAgent(t, nil)
+			a.disableProjectSettings = tt.optOut
+			result, err := a.runOnce(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("runOnce: %v", err)
+			}
+			if result.Text != "ok" || result.SessionID != "probe-session" {
+				t.Fatalf("result = %+v, want the probe's done event", result)
+			}
+
+			data, err := os.ReadFile(obsPath)
+			if err != nil {
+				t.Fatalf("read probe observation: %v", err)
+			}
+			var got jcodeEnvObservation
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatalf("parse probe observation: %v", err)
+			}
+			if got.NoAgentsMD != tt.want {
+				t.Errorf("JCODE_NO_AGENTS_MD seen by spawn = %q, want %q", got.NoAgentsMD, tt.want)
+			}
+		})
+	}
+}
+
+func TestJcodeAgent_NeutralizesGateInstructions(t *testing.T) {
+	if NeutralizesGateInstructions(&jcodeAgent{bin: "jcode"}) {
+		t.Error("jcode must not report neutralized without the opt-out")
+	}
+	if !NeutralizesGateInstructions(&jcodeAgent{bin: "jcode", disableProjectSettings: true}) {
+		t.Error("jcode must report neutralized under the opt-out")
+	}
+	// No operator extraArg can defeat the env-only knob: jcode run has no CLI
+	// flag that re-enables AGENTS.md loading (JCODE_NO_AGENTS_MD is the only
+	// surface), so a full agent_args_override stays neutralized.
+	if !NeutralizesGateInstructions(&jcodeAgent{
+		bin:                    "jcode",
+		disableProjectSettings: true,
+		extraArgs:              []string{"-m", "claude-opus-4-8", "--effort", "high"},
+	}) {
+		t.Error("jcode agent_args_override must not defeat the env-only suppression knob")
+	}
+}
+
 // newJcodeEnvProbeAgent returns a jcodeAgent whose binary is a wrapper script
 // that replays the current test executable in helper mode, so runOnce's argv
 // and environment can be observed without a real jcode install.
@@ -430,6 +504,7 @@ func TestJcodeRunOnceEnvProbe(t *testing.T) {
 	obs := jcodeEnvObservation{
 		AnthropicEffort: os.Getenv("JCODE_ANTHROPIC_REASONING_EFFORT"),
 		OpenAIEffort:    os.Getenv("JCODE_OPENAI_REASONING_EFFORT"),
+		NoAgentsMD:      os.Getenv("JCODE_NO_AGENTS_MD"),
 		Marker:          os.Getenv("NM_JCODE_PROBE_MARKER"),
 		Args:            argsAfterDoubleDash(os.Args),
 	}
