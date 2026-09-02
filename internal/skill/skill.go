@@ -45,307 +45,262 @@ func Markdown() string {
 }
 
 // body is the Markdown instructions an agent reads when the skill activates.
-// Keep it focused: the operating loop, the command vocabulary, and how to read
-// the TOON output. Do not embed live state here - the skill is static.
+// It follows the fleet's five-section skill template: a trigger description,
+// when to reach for the tool, curated workflows, fleet conventions, and
+// non-goals. Help-derivable content (flag lists, usage lines) is deliberately
+// absent - the agent can run `--help` itself. Do not embed live state here:
+// the skill is static.
 const body = `
 # no-mistakes
 
-` + "`no-mistakes`" + ` is a local gate that validates your code changes through a pipeline
-(intent, rebase, review, test, document, lint, push, PR, CI) before they reach
-the configured push target. You drive it through the ` + "`no-mistakes axi`" + ` command family, which prints
-machine-readable [TOON](https://toonformat.dev) to stdout and progress to stderr.
+Validate committed changes on a feature branch through the local gate pipeline
+(intent, rebase, review, test, document, lint, push, PR, CI) before they reach the
+configured push target. You drive it through the ` + "`" + `no-mistakes axi` + "`" + ` command family,
+which prints machine-readable [TOON](https://toonformat.dev) to stdout and progress
+to stderr. Every subcommand takes ` + "`" + `--help` + "`" + `; this skill covers only what ` + "`" + `--help` + "`" + `
+cannot know.
 
 ` + gateguidance.SkillBoundary + `
 
-When the user invokes ` + "`/no-mistakes`" + `, report the outcome at the end. If the user
-asks for something specific, translate that request into the matching ` + "`axi run`" + `
-flags yourself - for example, "skip the lint step" becomes ` + "`--skip=lint`" + `. Run
-` + "`no-mistakes axi run --help`" + ` to see the available flags.
+## When to reach for the pipeline
+
+- Reach for it when a change is meant to ship: it is committed on a feature
+  branch and you want it reviewed, tested, documented, pushed, and carried
+  through PR and CI. That is the whole point of the tool.
+- Do not reach for it to check a work in progress. Running your own tests or
+  linter is minutes faster, and the pipeline validates committed history rather
+  than your working tree, so uncommitted work is invisible to it.
+- Do not reach for it inside an active run. A validation-step agent has its own
+  phase and the outer executor owns everything else (see the boundary above).
+- Prefer ` + "`" + `no-mistakes axi status` + "`" + ` over starting anything when you only need to
+  know what a run is doing. Inspection never disturbs a run.
+- Prerequisites the pipeline cannot supply for you: the work is committed, you
+  are on a feature branch rather than the repository's default branch, the
+  repository was set up with ` + "`" + `no-mistakes init` + "`" + `, and the daemon has a runnable
+  configured pipeline agent - a supported native agent binary, the
+  ` + "`" + `agent: cursor` + "`" + ` ACP alias, or an explicit ` + "`" + `acp:<target>` + "`" + ` through ` + "`" + `acpx` + "`" + `. You
+  are the AXI driver, not an implicit pipeline-agent backend. When one of these
+  is missing, ` + "`" + `axi run` + "`" + ` returns an ` + "`" + `error:` + "`" + ` naming the fix; ` + "`" + `no-mistakes doctor` + "`" + `
+  reports a configuration or binary problem.
 
 ## Two ways to invoke
 
-` + "`/no-mistakes`" + ` works in two modes, depending on whether the user hands you a
+` + "`" + `/no-mistakes` + "`" + ` works in two modes, depending on whether the user hands you a
 task along with the command:
 
-- **Validate-only** - bare ` + "`/no-mistakes`" + ` (optionally with flag-style requests
-  like "skip the lint step"). The user's code changes are already committed;
-  validate them and report the outcome.
-- **Task-first** - ` + "`/no-mistakes <task>`" + `, e.g.
-  ` + "`/no-mistakes add a --json flag to the status command`" + `. First carry out the
+- **Validate-only** - bare ` + "`" + `/no-mistakes` + "`" + ` (optionally with flag-style requests
+  such as "skip the lint step", which you translate into the matching ` + "`" + `axi run` + "`" + `
+  flags yourself). The user's code changes are already committed; validate them
+  and report the outcome at the end.
+- **Task-first** - ` + "`" + `/no-mistakes <task>` + "`" + `, e.g.
+  ` + "`" + `/no-mistakes add a --json flag to the status command` + "`" + `. First carry out the
   task yourself, then validate the result through the pipeline:
-  1. **Check scope.** Inspect ` + "`git status`" + ` before you change or commit anything.
+  1. **Check scope.** Inspect ` + "`" + `git status` + "`" + ` before you change or commit anything.
      Preserve unrelated pre-existing uncommitted changes, and when you commit,
      commit only the changes that belong to the user's task.
   2. **Do the work.** Make the changes the task describes, then **commit them on
      a feature branch**. If the user is on the repository's default branch,
      create a feature branch first - the gate validates committed history on a
      non-default branch, so the work must land there before you run.
-  3. **Then validate**, passing the user's task as your ` + "`--intent`" + `. The task
-     text is exactly what the user set out to accomplish, in their own words, so
-     it *is* the intent - preserve requirements stated directly by the user,
-     including constraints, exclusions, acceptance criteria, and later decisions;
-     do not condense them into a diff summary or drop them while adding
-     implementation context. Enrich it with the decisions and tradeoffs you
-     made while doing the work (see
-     [Intent is required](#intent-is-required)).
+  3. **Then validate**, passing the user's task as your ` + "`" + `--intent` + "`" + `.
 
 ` + testguidance.Rule + `
 
-Everything below - preconditions, intent, the validate-and-decide loop - applies
-the same way once the work is committed on a feature branch.
+## Workflows
 
-## Before you start
+### Orient before you start
 
-- The work you want validated must be **committed** on a branch. The gate
-  validates committed history, not your uncommitted working tree.
-- You must be on a **feature branch**, not the repository's default branch.
-- The repository must already be initialized with ` + "`no-mistakes init`" + `.
-- The daemon must have a runnable configured pipeline agent: a supported native
-  agent binary, the ` + "`agent: cursor`" + ` ACP alias, or an explicit ` + "`acp:<target>`" + ` through
-  ` + "`acpx`" + `. You are the AXI driver, not
-  an implicit pipeline-agent backend. If none is available, the run fails
-  before its first step; ` + "`no-mistakes doctor`" + ` reports the configuration problem.
+` + "`" + "`" + "`" + `sh
+no-mistakes axi                # home view: identity, branch, daemon state, recent runs, next steps
+no-mistakes axi status         # current branch's run in full detail
+` + "`" + "`" + "`" + `
 
-If any of these is not met, ` + "`axi run`" + ` returns an ` + "`error:`" + ` with the exact command
-to fix it - read it and act on it (commit your work, or create a branch). If the
-repository is not initialized, run ` + "`no-mistakes init`" + ` first; if the ` + "`no-mistakes`" + `
-command itself is missing or misbehaving, ` + "`no-mistakes doctor`" + ` reports what is
-wrong.
-Before starting, run ` + "`no-mistakes axi`" + ` (home view).
-If it shows an active run on your current branch, inspect it with ` + "`no-mistakes axi status`" + `.
-If it is parked at a gate, drive it with ` + "`no-mistakes axi respond`" + `.
-Reattach an in-flight run by re-running ` + "`no-mistakes axi run`" + ` when it still matches your current ` + "`HEAD`" + ` - either as the submitted head or as the current pipeline head.
-Only ` + "`no-mistakes axi abort`" + ` it when you mean to discard that run before starting over; aborting is a between-runs action, never a way to take over or bypass a gate while a run is still going (see [Validate and decide](#validate-and-decide)).
-If it shows an active run on another branch, leave that run alone and start validation for your current branch with ` + "`no-mistakes axi run --intent \"...\"`" + `.
+An active run on your current branch: inspect it with ` + "`" + `no-mistakes axi status` + "`" + `,
+and if it is parked at a gate, drive it with ` + "`" + `no-mistakes axi respond` + "`" + `.
+Reattach an in-flight run by re-running ` + "`" + `no-mistakes axi run` + "`" + ` when it still matches your current ` + "`" + `HEAD` + "`" + ` - either as the submitted head or as the current pipeline head.
+An active run on another branch is not yours: leave it alone and start your own
+validation for the current branch.
 
-## Intent is required
+### Drive a run to an outcome
 
-When you start a run you must pass ` + "`--intent`" + `: **what the user set out to
-accomplish** - the goal or request behind this work, in their terms. This is not
-a description of the diff or the files you changed; it is the objective the
-change is meant to achieve. You know it from the conversation, so pass it
-directly - no-mistakes uses it verbatim instead of inferring it from local agent
-transcripts (slower and flakier).
+` + "`" + "`" + "`" + `sh
+no-mistakes axi run --intent "<what the user set out to accomplish>"
+no-mistakes axi respond --action fix --findings <id1,id2> --instructions "<guidance>"
+no-mistakes axi respond --action approve
+` + "`" + "`" + "`" + `
 
-Err on the side of completeness, not brevity. The review step uses ` + "`--intent`" + `
-to tell a deliberate decision apart from a mistake, so a thin one-line summary
-makes it flag things the user already chose. Capture the nuance: the user's
-goal, the specific decisions and tradeoffs they made along the way, any
-constraints or approaches they ruled in or out, and anything they explicitly
-asked for that might otherwise look surprising in the diff. A few sentences to a
-short paragraph is normal - write down what you learned from the conversation
-that a reviewer reading only the diff would not know.
+` + "`" + `axi run` + "`" + ` and every ` + "`" + `axi respond` + "`" + ` block until the next ` + "`" + `gate:` + "`" + ` or the final
+` + "`" + `outcome:` + "`" + `; review, test, and CI can each take several minutes, so allow a long
+timeout rather than cancelling or re-issuing the call. Read every return: on a
+` + "`" + `gate:` + "`" + `, decide and respond; loop until an ` + "`" + `outcome:` + "`" + `. The run never advances
+past a gate on its own, so never idle-wait for it to move by itself. To watch
+progress without disturbing it, run ` + "`" + `no-mistakes axi status` + "`" + ` from a separate
+call.
 
-## Validate and decide
+The ` + "`" + `--intent` + "`" + ` you pass is what the user set out to accomplish, in their terms -
+not a description of the diff. Err on the side of completeness: the review step
+uses it to tell a deliberate decision apart from a mistake, so a thin one-line
+summary makes it flag choices the user already made. Capture their goal, the
+decisions and tradeoffs made along the way, constraints ruled in or out, and
+anything they asked for that would look surprising in the diff. A few sentences
+to a short paragraph is normal. Passing it directly is also faster and steadier
+than letting no-mistakes infer it from local agent transcripts.
 
-Run the pipeline and decide on its findings as they come up:
+### Decide at a gate
 
-1. Start the run. It blocks until the first decision point or the end:
-   ` + "```sh" + `
-   no-mistakes axi run --intent "<what the user set out to accomplish>"
-   ` + "```" + `
-   ` + "`axi run`" + ` and every ` + "`axi respond`" + ` block synchronously - the review, test,
-   and CI steps can each take **several minutes**, so a single call may not
-   return for a while. That is normal; allow a long timeout and do not cancel
-   or re-issue the command because it seems slow. To check progress without
-   disturbing the run, use ` + "`no-mistakes axi status`" + ` from a separate call.
-   A long-running call is working, not stalled - background it if your harness
-   needs to, but the run **never advances past a gate on its own**. Read every
-   return; on a ` + "`gate:`" + `, respond; loop until an ` + "`outcome:`" + `. Never idle-wait
-   for the run to move forward by itself.
-   When that status output includes ` + "`awaiting_agent: parked <duration>`" + ` under the run,
-   the run is parked at an approval or fix-review gate and waiting for you to
-   send ` + "`axi respond`" + `. The field is observability only: it does not change
-   gate resolution, auto-resume the run, or make ` + "`--yes`" + ` the default.
-   While a step is actively ` + "`running`" + ` or ` + "`fixing`" + `, ` + "`axi status`" + ` may include
-   ` + "`active_steps`" + ` with ` + "`active_for`" + `, ` + "`last_activity`" + `, a native ` + "`agent_pid`" + ` when
-   a subprocess agent is running, and the current round such as ` + "`round 1`" + `,
-   ` + "`auto-fix 1/3`" + `, or ` + "`fix 2`" + `. If ` + "`last_activity`" + ` is prefixed with
-   ` + "`quiet`" + `, no step log or native-agent lifecycle activity has arrived for
-   longer than ` + "`step_quiet_warning`" + `. Treat that as a liveness clue, not as
-   permission to cancel, rerun, or edit the worktree yourself.
-2. If the output contains a ` + "`gate:`" + ` object, the pipeline is waiting on you.
-   Read its ` + "`findings`" + ` table. Each finding has an ` + "`id`" + `, ` + "`severity`" + `,
-   ` + "`file`" + `, ` + "`description`" + `, and an ` + "`action`" + ` that tells you how the
-   pipeline classified it:
-   - ` + "`auto-fix`" + ` - mechanical and low-risk; you can authorize the fix on
-     your own judgment by responding with ` + "`--action fix`" + `.
-   - ` + "`no-op`" + ` - informational only; nothing to do.
-   - ` + "`ask-user`" + ` - the finding challenges the user's deliberate intent or
-     touches product behavior. This is a call only the user can make - see
-     [Escalate ` + "`ask-user`" + ` findings](#escalate-ask-user-findings) below.
+A ` + "`" + `gate:` + "`" + ` object carries a ` + "`" + `findings` + "`" + ` table whose ` + "`" + `action` + "`" + ` column is the
+pipeline's own classification, and that column decides who may answer:
 
-   **Review auto-fix is disabled by default** (` + "`auto_fix.review: 0`" + `; a repo
-   or global ` + "`auto_fix.review > 0`" + ` override re-enables it), so blocking and
-   ask-user review findings park for your decision rather than being silently
-   self-fixed. (Other steps such as test and lint may auto-fix within the
-   pipeline and re-run before they ever gate.)
+- ` + "`" + `auto-fix` + "`" + ` - mechanical and low-risk; authorize it on your own judgment with
+  ` + "`" + `--action fix` + "`" + `.
+- ` + "`" + `no-op` + "`" + ` - informational; nothing to do.
+- ` + "`" + `ask-user` + "`" + ` - a decision that belongs to the user. Stop and escalate (see
+  Fleet conventions).
 
-   Choose one response:
-   ` + "```sh" + `
-   # accept the step as-is and continue
-   no-mistakes axi respond --action approve
+**Review auto-fix is disabled by default** (` + "`" + `auto_fix.review: 0` + "`" + `; a repo or
+global ` + "`" + `auto_fix.review > 0` + "`" + ` override re-enables it), so blocking and
+ask-user review findings park for your decision rather than being silently self-fixed.
+Other steps such as test and lint may auto-fix within the pipeline and re-run
+before they ever gate. When ` + "`" + `axi status` + "`" + ` shows ` + "`" + `awaiting_agent: parked
+<duration>` + "`" + `, the run is waiting on your ` + "`" + `respond` + "`" + `; the field is observability
+only and never auto-resumes anything. An ` + "`" + `active_steps` + "`" + ` table with
+` + "`" + `last_activity` + "`" + ` prefixed ` + "`" + `quiet` + "`" + ` is a liveness clue, not permission to cancel,
+rerun, or edit the worktree yourself.
 
-   # have the pipeline fix specific findings, then continue
-   no-mistakes axi respond --action fix --findings <id1,id2> --instructions "<optional guidance>"
+Two ` + "`" + `respond` + "`" + ` flags matter beyond the action itself: ` + "`" + `--add-finding '<json>'` + "`" + `
+folds a problem you spotted that the pipeline did not surface into the same fix
+round, and ` + "`" + `--step <name>` + "`" + ` answers a step other than the active gate (rarely
+needed).
 
-   # skip this step
-   no-mistakes axi respond --action skip
-   ` + "```" + `
-   While a run is active, never fix findings by editing the code yourself -
-   the pipeline owns both the findings and the fixes. Your job at a gate is to
-   decide and respond; ` + "`--action fix`" + ` has the pipeline apply the fix and
-   re-review the result. For the same reason, while a run is active do **not**
-   ` + "`abort`" + ` or ` + "`rerun`" + ` to go fix a finding yourself - even a real bug in
-   your own code - because that discards the pipeline's in-flight work and
-   forces a full re-validation. ` + "`abort`" + ` and ` + "`rerun`" + ` are for *between*
-   runs (after a ` + "`failed`" + ` or ` + "`cancelled`" + ` outcome), never to circumvent a
-   gate.
+### Read an outcome
 
-    Each ` + "`respond`" + ` blocks until the next ` + "`gate:`" + `, ` + "`checks-passed`" + ` decision point, or final outcome.
+- ` + "`" + `checks-passed` + "`" + ` - validated and CI is green (or the trusted default-branch
+  config declares ` + "`" + `no_ci: true` + "`" + ` with no checks registered), but the PR is not
+  merged. **You are done driving.** Tell the user the PR is ready and ask them
+  to review and merge it; the PR link is in the ` + "`" + `help` + "`" + ` line. Do not wait for the
+  merge and never treat "no CI checks reported" alone as green.
+- ` + "`" + `passed` + "`" + ` - the change cleared the gate and the PR was merged or closed.
+- ` + "`" + `failed` + "`" + ` or ` + "`" + `cancelled` + "`" + ` - fix what the output points at, commit on the same
+  feature branch, then start a fresh ` + "`" + `no-mistakes axi run --intent "..."` + "`" + ` or
+  ` + "`" + `no-mistakes rerun` + "`" + `. Never leave the user at a ` + "`" + `failed` + "`" + ` outcome without either
+  retrying or explaining what blocks it.
 
-    Two extra flags are available on ` + "`respond`" + ` when you need them:
-    - ` + "`--add-finding '<json>'`" + ` (with ` + "`--action fix`" + `) folds a finding you
-      spotted yourself - one the pipeline did not surface - into the fix round,
-      as a JSON finding object. Use it for a problem you noticed that is not in
-      the gate's own ` + "`findings`" + ` table.
-    - ` + "`--step <name>`" + ` responds to a specific step instead of the one currently
-      awaiting approval. You rarely need this; omit it to answer the active gate.
-3. Repeat step 2 until the output has an ` + "`outcome:`" + ` instead of a ` + "`gate:`" + `. The
-   outcomes are:
-   - ` + "`checks-passed`" + ` - the change is validated and CI is green (or the
-     trusted default-branch config declares ` + "`no_ci: true`" + ` and no checks are
-     registered - the help line names that declaration when it applies), but
-     the PR is not merged yet. **You are done driving the pipeline.** Do not
-     wait for the merge: tell the user the PR is ready and ask them to review
-     and merge it (the PR link is in the ` + "`help`" + ` line). A generic empty forge
-     check list without that declaration is not ready. no-mistakes keeps
-     monitoring the PR in the background until it is merged, closed, or its
-     configured idle timeout elapses, so a human can watch it in the TUI.
-   - ` + "`passed`" + ` - the changes cleared the gate and the PR was merged or closed.
-   - ` + "`failed`" + ` or ` + "`cancelled`" + ` - they did not; read the output and address it.
-     Fix whatever the output points at (a failing test, a lint error, a finding
-     you skipped), commit the fix on the same feature branch, then drive the
-     pipeline again - ` + "`no-mistakes axi run --intent \"...\"`" + ` starts a fresh run,
-     or ` + "`no-mistakes rerun`" + ` re-runs the pipeline for the current branch. This
-     is the right place to start over: a fresh run or ` + "`rerun`" + ` is a
-     *between-runs* action, correct only after a terminal outcome like this -
-     never mid-run to circumvent a gate. Do not leave the user at a ` + "`failed`" + `
-     outcome without either retrying or explaining what blocks it.
+On success, summarize what the pipeline validated and found. If the output has a
+` + "`" + `fixes` + "`" + ` table, the pipeline fixed findings your change missed: list each one so
+the user can review them.
 
-Before any post-pipeline local commit or fresh run, read the structured ` + "`branch_sync`" + ` object returned by AXI home, status, or a drive result.
-Only when its ` + "`next_action.code`" + ` is ` + "`sync`" + `, run ` + "`no-mistakes axi sync`" + ` first.
-That guarded sync may be a strict fast-forward or a content-equivalent diverged advance that anchors the pre-sync head before moving the branch with reset semantics; genuine divergence stays blocked.
-If it reports ` + "`next_action.code`" + ` is ` + "`continue_active_run`" + `, the pipeline still owns the branch: run the reported command, keep driving the active run, and do not make local follow-up commits.
-When ` + "`next_action.code`" + ` is ` + "`recover_custody`" + `, a terminal run left unpublished pipeline commits preserved in the local gate: run ` + "`no-mistakes axi sync --recover`" + ` to return custody and take the preserved head, or ` + "`no-mistakes rerun`" + ` to resume validating it instead.
-Recovery takes that head by fast-forward, or by adopting a diverged preserved head proven to carry every local change - the ordinary result of the pipeline rebasing your commits onto a newer base - after anchoring your pre-recovery head under ` + "`refs/no-mistakes/recover-local/<run>`" + `.
-That proof is deliberately narrow, so a rebase whose fix rounds also rewrote your own lines refuses instead of being adopted: when nothing can tell a deliberate pipeline fix from a dropped change, the decision is yours.
-A ` + "`branch_sync.state`" + ` of ` + "`user_owned`" + ` means the run went terminal before changing the submitted head and cancellation released the branch: the exact branch and head are yours and immediately usable for whichever delivery path is authorized - no sync action is needed, and a repeated ` + "`--recover`" + ` there is a harmless no-op.
-A dirty worktree, or divergence that cannot be proven contained, makes the recovery refuse with explicit choices; ` + "`--keep-local`" + ` keeps your current head while the preserved commits stay anchored under ` + "`refs/no-mistakes/recover/<run>`" + `.
-If synchronization is blocked, process that structured state instead of improvising reset, stash, merge, rebase, force, or branch replacement.
-After synchronization, commit the follow-up on top and re-run ` + "`no-mistakes axi run --intent \"...\"`" + ` with the original user intent.
-This preserves every prior gate-fix commit regardless of its configured subject.
+### Inspect a specific run or step
 
-The CI step deliberately keeps watching the PR after checks pass, so
-` + "`axi run`" + ` returns ` + "`checks-passed`" + ` the moment checks are green (or a trusted
-` + "`no_ci: true`" + ` declaration covers a zero-check repository) rather than
-blocking on the human merge. Never poll or re-run waiting for the merge yourself.
-Never treat "no CI checks reported" alone as green.
+` + "`" + "`" + "`" + `sh
+no-mistakes axi status --run <id>                # a named run, including one on another branch
+no-mistakes axi logs --step <name> --full        # the entire log of one step
+no-mistakes axi abort --run <id>                 # cancel a specific run, even outside its worktree
+` + "`" + "`" + "`" + `
 
-Because that monitor stays live, a PR that falls behind the default branch or
-hits a merge conflict after checks pass - commonly because another PR merged
-first - needs **no command from you**: never hand-rebase. When the CI monitor
-sees an actual conflict it **rebases onto the base, resolves it, restarts
-validation at Review, and re-pushes the branch through Push**; a PR that is merely behind but still clean needs nothing
-either, since the platform merges it. The one exception is when that monitor is
-no longer running - the PR was closed, the run was aborted or superseded, it
-idle-timed-out, or its auto-fix attempts were exhausted - in which case recover
-with ` + "`no-mistakes rerun`" + `, which cancels the stale monitor and re-runs the full
-pipeline including a deterministic rebase step. Do **not** reach for
-` + "`no-mistakes axi run`" + ` to refresh a still-active PR: after ` + "`checks-passed`" + ` it
-reattaches to the running monitor (HEAD unchanged) and returns its output
-without rebasing.
+` + "`" + `axi status` + "`" + ` is scoped to your current branch when ` + "`" + `--run` + "`" + ` is omitted: an
+implicitly resolved ` + "`" + `run:` + "`" + ` is this branch's. A run under ` + "`" + `other_branch_run:` + "`" + ` is
+one you named with ` + "`" + `--run <id>` + "`" + ` that belongs to another branch - never read its
+status or outcome as your own work.
+An explicit ` + "`" + `--run <id>` + "`" + ` rendered under ` + "`" + `run:` + "`" + ` while the current branch is unknown (detached ` + "`" + `HEAD` + "`" + ` or a branch-lookup failure) encodes no branch relationship.
+In a successful status response, no run object at all means this branch has no
+run yet, whatever the recent-runs table lists; an ` + "`" + `error:` + "`" + ` response proves
+nothing about run ownership, so act on the error instead of concluding the
+branch is idle.
 
-On a successful outcome (` + "`checks-passed`" + ` or ` + "`passed`" + `), close the loop with the
-user: summarize what happened during the pipeline in a concise, easily readable
-format - what was validated and what was found. If the output includes a
-` + "`fixes`" + ` table, the pipeline fixed findings your original change missed:
-acknowledge those misses and explicitly list each fix so the user can easily
-review them.
+### Synchronize the local branch after a run
 
-## Escalate ` + "`ask-user`" + ` findings
+` + "`" + "`" + "`" + `sh
+no-mistakes axi sync --check      # freshly verify an offered plan
+no-mistakes axi sync              # apply only an offered guarded synchronization
+no-mistakes axi sync --recover    # take back custody of preserved pipeline commits
+` + "`" + "`" + "`" + `
 
-A gate whose findings are all ` + "`auto-fix`" + ` or ` + "`no-op`" + ` is safe to drive on your
-own judgment: respond with ` + "`--action fix`" + ` or ` + "`--action approve`" + ` as
-appropriate. But a finding marked
-` + "`ask-user`" + ` is a decision that belongs to the user, not you - the pipeline
-flagged it because it challenges their deliberate intent or changes product
-behavior. Do not approve, fix, or skip it on your own. Instead, stop and bring
-it to the user before you respond:
+Before any post-pipeline local commit or fresh run, read the structured
+` + "`" + `branch_sync` + "`" + ` object returned by AXI home, status, or a drive result, and follow
+its ` + "`" + `next_action.code` + "`" + `:
 
-- Relay each ` + "`ask-user`" + ` finding to them as the pipeline wrote it - its
-  ` + "`id`" + `, ` + "`file`" + `, and full ` + "`description`" + ` verbatim. Do not paraphrase,
-  summarize away the detail, or pre-judge the answer.
-- Ask how they want to proceed, then translate their decision into the matching
-  ` + "`respond`" + ` call: ` + "`--action fix`" + ` (pass their guidance through
-  ` + "`--instructions`" + `), ` + "`--action approve`" + `, or ` + "`--action skip`" + `.
+- ` + "`" + `sync` + "`" + ` - run ` + "`" + `no-mistakes axi sync` + "`" + `. That guarded sync may be a strict
+  fast-forward or a content-equivalent diverged advance that anchors the
+  pre-sync head before moving the branch with reset semantics; genuine
+  divergence stays blocked.
+- ` + "`" + `continue_active_run` + "`" + ` - the pipeline still owns the branch. Run the reported
+  command, keep driving the run, and make no local follow-up commits.
+- ` + "`" + `recover_custody` + "`" + ` - a terminal run left unpublished pipeline commits
+  preserved in the local gate. Run ` + "`" + `no-mistakes axi sync --recover` + "`" + ` to take
+  the preserved head, or ` + "`" + `no-mistakes rerun` + "`" + ` to resume validating it.
+  Recovery fast-forwards, or adopts a diverged preserved head proven to carry every local change (the
+  ordinary result of the pipeline rebasing onto a newer base), after anchoring
+  your pre-recovery head under ` + "`" + `refs/no-mistakes/recover-local/<run>` + "`" + `. That
+  proof is deliberately narrow, so a rebase whose fix rounds also rewrote your
+  own lines refuses instead: when nothing can tell a deliberate pipeline fix
+  from a dropped change, the decision is yours. ` + "`" + `--keep-local` + "`" + ` keeps your
+  current head while the preserved commits stay anchored under
+  ` + "`" + `refs/no-mistakes/recover/<run>` + "`" + `.
 
-The one exception is ` + "`--yes`" + ` (below): it is the user's standing consent to
-drive every gate unattended, so under ` + "`--yes`" + ` you resolve ` + "`ask-user`" + `
-findings automatically instead of stopping to ask.
+A ` + "`" + `branch_sync.state` + "`" + ` of ` + "`" + `user_owned` + "`" + ` means the run went terminal
+before changing the submitted head and cancellation released the branch: the exact
+branch and head are yours and immediately usable, no sync action is needed, and
+a repeated ` + "`" + `--recover` + "`" + ` there is a harmless no-op. When synchronization is
+blocked, process that structured state instead of improvising
+reset, stash, merge, rebase, force, or branch replacement.
+Afterwards, commit the follow-up on top and re-run
+` + "`" + `no-mistakes axi run --intent "..."` + "`" + ` with the original user intent.
 
-If you have clear consent to drive the run automatically, pass ` + "`--yes`" + ` to ` + "`axi run`" + `
-or ` + "`axi respond`" + `. It treats every actionable finding - ` + "`auto-fix`" + ` and
-` + "`ask-user`" + ` alike - as consent to fix it, selects every current finding for one
-fix round, accepts the resulting fix review, and approves gates with only
-` + "`no-op`" + ` findings. Only use it when the user has asked you to drive the whole
-run without checking back.
+## Fleet conventions
 
-## Inspecting state
+**The worker that started a run owns it end to end.** Every ` + "`" + `no-mistakes axi
+run` + "`" + ` and ` + "`" + `no-mistakes axi respond` + "`" + ` call through to the next gate or the final
+outcome belongs to that one driver. A second agent responding to the same gate,
+or a human hand-editing the worktree mid-run, duplicates ownership and breaks
+the gate flow.
 
-` + "```sh" + `
-no-mistakes axi               # home view: current branch, active runs, next steps
-no-mistakes axi status        # full detail plus cached branch_sync when relevant
-no-mistakes axi sync --check  # freshly verify an offered synchronization plan
-no-mistakes axi sync          # apply only an offered guarded synchronization
-no-mistakes axi sync --recover  # return custody after a terminal run left unpublished pipeline commits
-no-mistakes axi logs --step <name> --full   # full log output of one step
-no-mistakes axi abort         # cancel the current-branch active run
-no-mistakes axi abort --run <id>   # cancel a specific run by id (works outside its worktree)
-` + "```" + `
+**An ` + "`" + `ask-user` + "`" + ` finding is a real stop.** It is not a slow ` + "`" + `auto-fix` + "`" + `: the
+pipeline raised it because the finding challenges the user's deliberate intent
+or changes product behavior. Relay it to the user as the pipeline wrote it - its
+` + "`" + `id` + "`" + `, ` + "`" + `file` + "`" + `, and full ` + "`" + `description` + "`" + ` verbatim, without paraphrase or a
+pre-judged answer - and translate their reply into ` + "`" + `--action fix` + "`" + ` (their
+guidance in ` + "`" + `--instructions` + "`" + `), ` + "`" + `--action approve` + "`" + `, or ` + "`" + `--action skip` + "`" + `. ` + "`" + `--yes` + "`" + `
+resolves ` + "`" + `ask-user` + "`" + ` findings automatically, which is exactly why it is forbidden
+as a way past one: use it only when the user has explicitly asked you to drive
+the whole run unattended.
 
-## Reading the output
+**While a run is active, the pipeline owns the code.** Never fix a finding by
+editing files yourself; ` + "`" + `--action fix` + "`" + ` has the pipeline apply the fix and
+re-review the result. For the same reason do not ` + "`" + `abort` + "`" + ` or ` + "`" + `rerun` + "`" + ` mid-run to
+go fix something yourself, even a real bug of your own - that discards in-flight
+work and forces full re-validation. ` + "`" + `abort` + "`" + ` and ` + "`" + `rerun` + "`" + ` are *between-runs*
+actions, correct after a ` + "`" + `failed` + "`" + ` or ` + "`" + `cancelled` + "`" + ` outcome, never a way to
+circumvent a gate.
 
-- Output is TOON: ` + "`key: value`" + ` pairs, ` + "`name[N]{cols}:`" + ` tables, and ` + "`help[N]:`" + ` hints.
-- ` + "`axi status`" + ` is scoped to your current branch when ` + "`--run`" + ` is omitted: with a known current branch, an implicitly resolved ` + "`run:`" + ` is this branch's. A run under ` + "`other_branch_run:`" + ` is one you named with ` + "`--run <id>`" + ` that belongs to another branch - never read its status or outcome as your own work. An explicit ` + "`--run <id>`" + ` rendered under ` + "`run:`" + ` while the current branch is unknown (detached ` + "`HEAD`" + ` or a branch-lookup failure) encodes no branch relationship. In a successful status response, no run object at all means this branch has no run yet, whatever the recent-runs table lists; an ` + "`error:`" + ` response proves nothing about run ownership, so act on the error instead of concluding the branch is idle.
-- A non-terminal run object may include ` + "`awaiting_agent: parked <duration>`" + ` immediately after ` + "`status`" + `; that means the run is parked at a gate. Only an implicitly resolved current-branch gate offers ` + "`axi respond`" + `; an explicit ` + "`--run <id>`" + ` status is inspection-only even when its branch matches, because the branch may have a newer active run. Follow the response's ` + "`help`" + `.
-- A run object with a ` + "`running`" + ` or ` + "`fixing`" + ` step may include an ` + "`active_steps`" + ` table. Use it to see the active duration, latest activity, native agent PID, and current execution or fix round.
-- The ` + "`help`" + ` list at the bottom of most responses tells you the next commands to run.
-- Errors are printed as ` + "`error: ...`" + ` on stdout with a ` + "`help`" + ` list; act on the suggestion.
-- Exit codes: ` + "`0`" + ` success, no-op, or normal decision gates, ` + "`1`" + ` failed or cancelled final outcomes, ` + "`2`" + ` bad usage.
+**Follow-up work goes on top, never over.** Commit post-pipeline follow-up work
+on top of the existing branch so every pipeline fix commit remains present.
+Never abort-and-restart, reset, or replace the branch in a way that drops prior
+gate-fix commits.
 
-A ` + "`gate:`" + ` waiting on you looks roughly like this - a ` + "`gate:`" + ` line naming the step, optional step-specific fields such as ` + "`note`" + `, a ` + "`findings[N]{...}:`" + ` table with one row per finding, and a ` + "`help[N]:`" + ` list of next commands:
+**A ` + "`" + `checks-passed` + "`" + ` PR keeps monitoring itself.** If this PR later falls behind
+the default branch or hits a merge conflict, the CI monitor rebases onto the
+base, resolves it, restarts validation at Review, and re-pushes it through Push
+automatically - run no command and never hand-rebase. Only when that monitor is
+no longer running (PR closed, run aborted, idle-timeout, or auto-fix exhausted)
+recover with ` + "`" + `no-mistakes rerun` + "`" + `. Reaching for ` + "`" + `no-mistakes axi run` + "`" + ` on a still
+active PR only reattaches to the monitor and returns its output without
+rebasing.
 
-` + "```" + `
-gate: review
-note: Review auto-fix is disabled by default (auto_fix.review: 0; a repo or global auto_fix.review > 0 override re-enables it), so blocking and ask-user review findings park for your decision rather than being silently self-fixed.
-findings[2]{id,severity,file,line,action,description}:
-  r1,warning,internal/pipeline/executor.go,,auto-fix,Error from os.Remove is ignored
-  r2,error,cmd/no-mistakes/main.go,,ask-user,New --force flag bypasses the confirm prompt
-help[6]:
-  Run ` + "`no-mistakes axi respond --action approve`" + ` to accept this step and continue
-  Run ` + "`no-mistakes axi respond --action fix --findings <ids>`" + ` to have the pipeline fix the selected findings (do not edit files yourself)
-  Run ` + "`no-mistakes axi respond --action skip`" + ` to skip this step
-  Run ` + "`no-mistakes axi logs --step review --full`" + ` to read the full step log
-  A long-running call is working, not stalled - background it if your harness needs to, but the run never advances past a gate on its own. Read every return; on a ` + "`gate:`" + `, respond; loop until an ` + "`outcome:`" + `.
-  Commit post-pipeline follow-up work on top of the existing branch so every pipeline fix commit remains present. Never abort-and-restart, reset, or replace the branch in a way that drops prior gate-fix commits.
-` + "```" + `
+**Output and exit-code conventions.** Output is TOON: ` + "`" + `key: value` + "`" + ` pairs,
+` + "`" + `name[N]{cols}:` + "`" + ` tables, and ` + "`" + `help[N]:` + "`" + ` hints that tell you the next commands.
+Errors print as ` + "`" + `error: ...` + "`" + ` on stdout with their own ` + "`" + `help` + "`" + ` list, so act on the
+suggestion. Exit codes are ` + "`" + `0` + "`" + ` for success, no-ops, and normal decision gates,
+` + "`" + `1` + "`" + ` for failed or cancelled final outcomes, and ` + "`" + `2` + "`" + ` for bad usage.
 
-Read the ` + "`action`" + ` column per row: decide ` + "`r1`" + ` (auto-fix) on your own
-judgment - ` + "`respond --action fix --findings r1`" + ` hands it to the pipeline to
-fix - but stop and escalate ` + "`r2`" + ` (ask-user) to the user before responding. A
-final state
-instead shows ` + "`outcome: <checks-passed|passed|failed|cancelled>`" + ` with no
-` + "`findings`" + ` table. Field names and exact columns can vary by step and version,
-so read the actual ` + "`findings`" + ` header rather than assuming this layout.
+## Non-goals
+
+- Not a replacement for your own fast feedback loop. Run your tests and linter
+  directly while iterating; the pipeline is the shipping gate, not a compiler.
+- Not a merge button. ` + "`" + `checks-passed` + "`" + ` is where your driving ends; a human merges.
+- Not a flag reference. ` + "`" + `no-mistakes axi run --help` + "`" + ` and each subcommand's
+  ` + "`" + `--help` + "`" + ` own the flags, defaults, and step names.
+- Not usable on the default branch or on uncommitted work, by design.
+- Not something to bypass. There is no supported way past an ` + "`" + `ask-user` + "`" + ` finding
+  other than the user's decision, and no supported way to take a branch back
+  from an active run.
 `
