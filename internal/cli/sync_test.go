@@ -195,6 +195,7 @@ func TestAxiSyncCheckAndApplyReturnFullStructuredState(t *testing.T) {
 }
 
 func TestAxiSyncEquivalentDivergedCheckAndApply(t *testing.T) {
+	skipIfMergeTreeUnsupported(t)
 	f := newCLISyncFixture(t)
 	rewriteCLIPipelineHead(t, &f, []pipelineCommitForCLI{
 		{message: "feature rebased", files: map[string]string{"file.txt": "feature\n"}},

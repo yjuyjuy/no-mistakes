@@ -339,6 +339,7 @@ The rationale lives in the `resolveRun` doc comment and the status-rendering com
   When the operator keeps a behind or diverged local head instead of taking the preserved head, `--keep-local` never touches the worktree and CAS-moves the gate branch to the kept head, staging objects via gate-side fetch - never a push, which would fire the receive hook and start a run.
   The full relation matrix and fail-safe rules live in the `Recover` doc comment in `internal/branchsync/sync.go`.
 - Public guidance is owned by `internal/skill/skill.go` plus live AXI strings, then regenerated with `make skill`. Core regressions live in `internal/branchsync` (incl. `recover_test.go`), `internal/cli/sync_test.go`, `internal/tui/branch_sync_test.go`, and e2e `TestAxiBranchSyncJourney` / `TestAxiCustodyRecoveryJourney` / `TestAxiCustodyRecoveryAfterRebaseJourney` / `TestAxiPrePushAbortUnmovedHeadCustodyJourney`.
+- The equivalent-divergence proofs (`equivalentDivergence`/`preservedContainsLocalWork`) call `git merge-tree --write-tree --merge-base`, so git >= 2.40 is a hard requirement; the minimum lives in `internal/git` (`MinVersionMajor`/`MinVersionMinor`), `no-mistakes doctor` warns below it, and the branchsync tests that exercise the proofs skip with a clear message on older git (`skipIfMergeTreeUnsupported`) instead of failing or falsely passing.
 
 **Post-Review Head Continuity and Push Binding**
 

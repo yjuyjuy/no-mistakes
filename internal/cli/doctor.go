@@ -13,6 +13,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/daemon"
 	"github.com/kunchenguid/no-mistakes/internal/db"
 	"github.com/kunchenguid/no-mistakes/internal/forgecontext"
+	"github.com/kunchenguid/no-mistakes/internal/git"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
 	"github.com/kunchenguid/no-mistakes/internal/scm"
 	"github.com/kunchenguid/no-mistakes/internal/shellenv"
@@ -59,7 +60,11 @@ func newDoctorCmd() *cobra.Command {
 						fail("git           ", fmt.Sprintf("error (%v)", err))
 						allOK = false
 					} else {
-						ok("git           ", strings.TrimSpace(string(out)))
+						raw := strings.TrimSpace(string(out))
+						ok("git           ", raw)
+						if major, minor, parsed := git.ParseVersion(raw); parsed && (major < git.MinVersionMajor || (major == git.MinVersionMajor && minor < git.MinVersionMinor)) {
+							warn("git           ", fmt.Sprintf("git %d.%d is older than the required git >= %d.%d; branch-sync custody recovery uses `git merge-tree --write-tree --merge-base`", major, minor, git.MinVersionMajor, git.MinVersionMinor))
+						}
 					}
 				}
 
