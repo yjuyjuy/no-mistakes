@@ -46,7 +46,7 @@ make install
 
 ## Prerequisites
 
-- **git** - required
+- **git** >= 2.40 - required (the branch-sync safety checks use `git merge-tree --write-tree --merge-base`, added in git 2.40)
 - **One supported agent runner** - `claude`, `codex`, `grok`, `acli` (Rovo Dev), `opencode`, `pi`, `copilot`, or `agy` (Antigravity), or a configured Cursor/ACP runner such as `agent: cursor`; see [Global Config](/no-mistakes/reference/global-config/) for ACP requirements
 - **Optional, for PRs and CI:**
   - `gh` CLI (GitHub)

@@ -66,6 +66,8 @@ Nothing reaches the configured push target until every check is green.
 
 ## Install
 
+Requires **git >= 2.40** (the branch-sync safety checks use `git merge-tree --write-tree --merge-base`, added in git 2.40) and one supported pipeline agent.
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh
 ```

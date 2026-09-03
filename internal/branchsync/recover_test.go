@@ -1502,6 +1502,7 @@ func (f *recoverFixture) localAnchorRef() string {
 // is exactly what made the old decision escalate.
 func TestRecoverRebasedPreservedHeadAdoptsWithoutEscalating(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newRebasedRecoverFixture(t, types.RunCancelled)
 	if mustRun(t, f.local, "rev-parse", "HEAD") != f.submitted {
@@ -1551,6 +1552,7 @@ func TestRecoverRebasedPreservedHeadAdoptsWithoutEscalating(t *testing.T) {
 // preserved head would silently discard unlanded work.
 func TestRecoverRebasedPreservedHeadStillEscalatesForUniqueLocalWork(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newRebasedRecoverFixture(t, types.RunCancelled)
 	mustWrite(t, filepath.Join(f.local, "unlanded.txt"), "unlanded work\n")
@@ -1585,6 +1587,7 @@ func TestRecoverRebasedPreservedHeadStillEscalatesForUniqueLocalWork(t *testing.
 // adopted on a patch-identity guess.
 func TestRecoverRebasedPreservedHeadEscalatesWhenFixRoundsRewroteOperatorLines(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newRebasedRecoverFixtureWithPipelineWork(t, types.RunCancelled, func(t *testing.T, pipelineDir string) {
 		mustWrite(t, filepath.Join(pipelineDir, "feature.txt"), "feature one\nfeature two guarded\n")
@@ -1620,6 +1623,7 @@ func TestRecoverRebasedPreservedHeadEscalatesWhenFixRoundsRewroteOperatorLines(t
 // head, so it refuses and the concurrent commit survives untouched.
 func TestRecoverRebasedPreservedHeadRefusesConcurrentCommitWithoutLosingIt(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newRebasedRecoverFixture(t, types.RunCancelled)
 	var concurrent string
@@ -1650,6 +1654,7 @@ func TestRecoverRebasedPreservedHeadRefusesConcurrentCommitWithoutLosingIt(t *te
 
 func TestRecoverRebasedPreservedHeadRollsBackAfterConcurrentCheckout(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newRebasedRecoverFixture(t, types.RunCancelled)
 	mustRun(t, f.local, "branch", "other-clean-branch", f.submitted)
@@ -1684,6 +1689,7 @@ func TestRecoverRebasedPreservedHeadRollsBackAfterConcurrentCheckout(t *testing.
 // and the branch must be restored to where it started.
 func TestRecoverRebasedPreservedHeadRefusesConcurrentWorktreeEditWithoutLosingIt(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newRebasedRecoverFixture(t, types.RunCancelled)
 	f.service.beforeRecoverBranchMove = func() {
@@ -1716,6 +1722,7 @@ func TestRecoverRebasedPreservedHeadRefusesConcurrentWorktreeEditWithoutLosingIt
 // never touches the worktree.
 func TestRecoverRebasedPreservedHeadRefusesDirtyWorktree(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newRebasedRecoverFixture(t, types.RunCancelled)
 	mustWrite(t, filepath.Join(f.local, "feature.txt"), "uncommitted edit\n")
@@ -1789,6 +1796,7 @@ func TestRecoverRebasedPreservedHeadKeepLocalStillKeepsTheLocalHead(t *testing.T
 // pre-move guard still catches a branch switch that happens before the move.
 func TestRecoverRebasedPreservedHeadRechecksAfterAnchoringLocalHead(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newRebasedRecoverFixture(t, types.RunCancelled)
 	f.service.beforeRecoverWorktreeMove = func() {
@@ -1812,6 +1820,7 @@ func TestRecoverRebasedPreservedHeadRechecksAfterAnchoringLocalHead(t *testing.T
 // the operator's exact content, so adopting it loses nothing.
 func TestRecoverSquashedEquivalentPreservedHeadAdopts(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newRebasedRecoverFixture(t, types.RunCancelled)
 	pipeline := filepath.Join(filepath.Dir(f.local), "squash")
@@ -1850,6 +1859,7 @@ func TestRecoverSquashedEquivalentPreservedHeadAdopts(t *testing.T) {
 // rather than silently discard it.
 func TestRecoverSquashedPreservedHeadStillEscalatesForDroppedLocalWork(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newRebasedRecoverFixture(t, types.RunCancelled)
 	pipeline := filepath.Join(filepath.Dir(f.local), "squash-drop")

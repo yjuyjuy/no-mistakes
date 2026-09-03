@@ -250,6 +250,7 @@ func TestApplyCleanStrictBehindFastForwardsExactBoundHead(t *testing.T) {
 
 func TestApplyEquivalentButDivergedRebaseWithPipelineCommitsAnchorsAndAdvances(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newSyncFixture(t)
 	rebuildPipelineHead(t, f, []pipelineCommit{
@@ -274,6 +275,7 @@ func TestApplyEquivalentButDivergedRebaseWithPipelineCommitsAnchorsAndAdvances(t
 
 func TestEquivalentButDivergedClassification(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	tests := []struct {
 		name      string
@@ -344,6 +346,7 @@ func TestEquivalentButDivergedClassification(t *testing.T) {
 
 func TestEquivalentDivergenceAcceptsSamePathPipelineFix(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newSyncFixture(t)
 	mustWrite(t, filepath.Join(f.local, "file.txt"), "base\nstable\n")
@@ -367,6 +370,7 @@ func TestEquivalentDivergenceAcceptsSamePathPipelineFix(t *testing.T) {
 
 func TestEquivalentDivergenceRefusesRenameSourceOmission(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newSyncFixture(t)
 	mustRun(t, f.local, "config", "diff.renames", "true")
@@ -385,6 +389,7 @@ func TestEquivalentDivergenceRefusesRenameSourceOmission(t *testing.T) {
 
 func TestEquivalentDivergenceRefusesDifferentBinaryContent(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newSyncFixture(t)
 	mustWrite(t, filepath.Join(f.local, "blob.bin"), string([]byte{0x00, 0x01, 0x02, 0x03}))
@@ -404,6 +409,7 @@ func TestEquivalentDivergenceRefusesDifferentBinaryContent(t *testing.T) {
 
 func TestEquivalentDivergenceRefusesIntermediatePatchReverted(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newSyncFixture(t)
 	rebuildPipelineHead(t, f, []pipelineCommit{
@@ -420,6 +426,7 @@ func TestEquivalentDivergenceRefusesIntermediatePatchReverted(t *testing.T) {
 
 func TestEquivalentDivergenceRefusesWrongRepeatedLineOccurrence(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newSyncFixture(t)
 	mustWrite(t, filepath.Join(f.local, "repeated.txt"), "foo\nfoo\n")
@@ -441,6 +448,7 @@ func TestEquivalentDivergenceRefusesWrongRepeatedLineOccurrence(t *testing.T) {
 
 func TestEquivalentDivergenceAcceptsShiftedPreservedHunk(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newSyncFixture(t)
 	mustWrite(t, filepath.Join(f.local, "file.txt"), "alpha\nbase\nomega\n")
@@ -464,6 +472,7 @@ func TestEquivalentDivergenceAcceptsShiftedPreservedHunk(t *testing.T) {
 
 func TestEquivalentDivergenceRefusesAmbiguousRepeatedContext(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	f := newSyncFixture(t)
 	mustWrite(t, filepath.Join(f.local, "file.txt"), "ctx\nfeature\nend\n")
@@ -481,6 +490,7 @@ func TestEquivalentDivergenceRefusesAmbiguousRepeatedContext(t *testing.T) {
 
 func TestEquivalentDivergenceRefusesUnrepresentedEdgeDeletion(t *testing.T) {
 	t.Parallel()
+	skipIfMergeTreeUnsupported(t)
 
 	cases := map[string]struct {
 		base     string
